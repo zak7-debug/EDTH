@@ -94,3 +94,17 @@ def test_ukrainian_threat_clip_is_a_no_fly_zone():
 def test_asking_for_a_drone_is_not_a_threat():
     r = parse_report("Борсук один, медик. Надішліть дрон, потрібно два турнікети.", _ids())
     assert [e["type"] for e in r.events] == ["LOW_STOCK"] and r.unparsed == []
+
+
+def test_truck_driver_reports_from_device_position(monkeypatch):
+    """A driver isn't in the graph: /voice/text with lat/lon places their report there."""
+    monkeypatch.setenv("EDTH_REPO", "memory")
+    from backend.app import dev_server
+    dev_server.world = dev_server.World()
+    with TestClient(dev_server.app) as client:
+        r = client.post("/voice/text", json={"text": "Водій. Дорога заблокована, вирва.", "lat": 47.672, "lon": 35.585}).json()
+        assert [e["type"] for e in r["events"]] == ["ROAD_BLOCKED"] and r["unparsed"] == []
+        assert r["english"] == "DRIVER reports road blocked at their position."
+        assert r["results"][0]["zone"]["properties"]["kind"] == "ROAD_BLOCKED"
+        r = client.post("/voice/text", json={"text": "Дорога заблокована."}).json()
+        assert r["events"] == [] and "no callsign" in r["unparsed"][0]
