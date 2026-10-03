@@ -5,11 +5,11 @@ When a soldier goes critical or a medic runs low, the system finds the best dron
 ## Run
 
 ```bash
-./start.sh                    # TuringDB (in-memory server) + API on http://localhost:8000
+./start.sh                    # TuringDB (in-memory server) + API + dashboard on http://localhost:8000
 EDTH_REPO=memory ./start.sh   # same, without a database
 ```
 
-TuringDB's graph UI is at http://localhost:8080 while it runs. First run creates `.venv` and installs `requirements.txt` (Python 3.11+).
+Open http://localhost:8000 and press **Run demo scenario**. TuringDB's graph UI is at http://localhost:8080 while it runs. First run creates `.venv` and installs `requirements.txt` (Python 3.11+).
 
 ## Test
 
@@ -28,11 +28,13 @@ backend/app/turing_repo.py TuringDB implementation
 backend/app/seed.py        South-east Ukraine sector (fictional laydown): suppliers, hospitals, hubs, 3 launch sites,
                            8 drones, 20 personnel, 2 no-fly zones
 backend/app/messages.py    WebSocket message builders
-backend/app/main.py        FastAPI app and /ws
+backend/app/main.py        FastAPI app (Sasank, stub for now)
+backend/app/dev_server.py  working API: POST /events, /ws, tick loop, demo scenario, /reset
+backend/app/flights.py     flies dispatched drones, delivers, returns, drains the queue
 backend/app/dispatch.py    dispatch engine
-backend/app/routing.py     waypoint graph + A*
+backend/app/routing.py     shortest path round threat zones (visibility graph + A*)
 sim/simulator.py           event simulator
-frontend/                  Leaflet dashboard
+frontend/index.html        Leaflet dashboard (mock/ = offline seed, vendor/ = Leaflet)
 contracts/                 graph schema, event and WebSocket formats
 docs/                      TuringDB notes, foundations guide
 ```

@@ -1,0 +1,418 @@
+<!doctype html>
+<!--
+  EDTH dashboard: the one screen the judges watch.
+
+  How it fits the product:
+  - Connects to the backend's /ws, renders the `snapshot`, then applies every live message from
+    contracts/messages.md (event, dispatch, no_dispatch, drone_update, delivered, queue).
+  - The trigger panel and demo button POST to the same API the simulator uses, so a click goes
+    through the real dispatch engine and TuringDB.
+  - Opened from disk with no backend, it shows mock/snapshot.js (the seed) so layout work never
+    waits on the API.
+
+  Plain HTML + JavaScript + Leaflet from a CDN, no build step. Searchable tags:
+    TUNE: numbers / colours to adjust   HOOK: where it talks to the backend   DEMO: demo-only behaviour
+-->
+<html lang="en">
+<head>
+<link rel="icon" href="data:,">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Medic Resupply Ops</title>
+<!-- Leaflet 1.9.4 is vendored in vendor/leaflet so the map works on hackathon wifi (only the tiles need internet). -->
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="mock/snapshot.js"></script>
+<style>
+  /* TUNE: theme colours. Status colours are reused by the map markers below. */
+  :root {
+    --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --muted: #8b949e;
+    --ok: #3fb950; --wounded: #f0b429; --critical: #f85149; --medic: #58a6ff;
+    --route: #39d0d8; --zone: #f85149; --depot: #d2a8ff; --accent: #39d0d8;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }  /* TUNE: base font for the projector */
+  body { display: grid; grid-template-rows: auto 1fr; }
+  header { display: flex; align-items: center; gap: 20px; padding: 10px 18px; border-bottom: 1px solid var(--line);
+    background: var(--panel); flex-wrap: wrap; }
+  header h1 { font-size: 22px; margin: 0; letter-spacing: .5px; }
+  .pill { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+  .pill.live { color: var(--ok); border-color: var(--ok); }
+  .pill.mock { color: var(--wounded); border-color: var(--wounded); }
+  .lat { display: flex; gap: 18px; margin-left: auto; align-items: baseline; }
+  .lat .v { font: 700 30px/1 ui-monospace, Menlo, monospace; color: var(--accent); }
+  .lat .k { font-size: 13px; color: var(--muted); display: block; }
+  button { background: #21262d; color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 14px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: #1f6feb; border-color: #1f6feb; font-weight: 600; }
+  button.crit { border-color: var(--critical); color: var(--critical); }
+  button.wnd { border-color: var(--wounded); color: var(--wounded); }
+  main { display: grid; grid-template-columns: 1fr 420px; min-height: 0; }
+  #mapwrap { position: relative; min-height: 0; }
+  #map { position: absolute; inset: 0; background: #0b0f14; }
+  aside { border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
+  section { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 0 0 8px; }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  select, input { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+    padding: 7px 8px; font: inherit; min-width: 0; }
+  select { flex: 1; }
+  input[type=number] { width: 64px; }
+  #log { flex: 1; overflow-y: auto; padding: 0 14px 12px; min-height: 0; }
+  #log .e { padding: 6px 0; border-bottom: 1px solid #21262d; font-size: 15px; display: grid;
+    grid-template-columns: 70px 1fr auto; gap: 8px; }
+  #log .t { color: var(--muted); font: 13px ui-monospace, monospace; padding-top: 2px; }
+  #log .ms { font: 600 14px ui-monospace, monospace; color: var(--accent); }
+  #log .dispatch { color: var(--route); } #log .nod { color: var(--critical); } #log .deliv { color: var(--ok); }
+  #queue .q { display: flex; justify-content: space-between; padding: 4px 0; font-size: 15px; }
+  .empty { color: var(--muted); font-size: 14px; }
+  .sev-CRITICAL { color: var(--critical); font-weight: 700; } .sev-WOUNDED { color: var(--wounded); font-weight: 700; }
+  .sev-LOW_STOCK { color: var(--medic); font-weight: 700; }
+  #banner { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 1000; max-width: 80%;
+    background: #3d1214; border: 2px solid var(--critical); color: #ffdcd7; padding: 14px 20px; border-radius: 10px;
+    font-size: 20px; display: none; cursor: pointer; box-shadow: 0 8px 30px #000a; }
+  #banner b { color: #fff; } #banner .alt { font-size: 16px; margin-top: 6px; color: #ffb4ab; }
+  #toast { position: absolute; bottom: 18px; left: 18px; z-index: 1000; background: #1f2937; border: 1px solid var(--line);
+    padding: 8px 12px; border-radius: 8px; display: none; }
+  .legend { position: absolute; bottom: 18px; right: 18px; z-index: 900; background: #161b22e6; border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 12px; font-size: 14px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin: 0 6px 0 10px; vertical-align: -1px; }
+  .legend i:first-child { margin-left: 0; }
+  /* Map markers */
+  .drone { display: flex; align-items: center; gap: 4px; white-space: nowrap; font: 700 13px system-ui; color: #fff;
+    text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  .drone .dot { width: 16px; height: 16px; transform: rotate(45deg); border: 2px solid #fff; flex: none; }
+  .drone .eta { background: var(--route); color: #000; text-shadow: none; padding: 1px 6px; border-radius: 6px; font: 700 14px ui-monospace, monospace; }
+  .depot { width: 18px; height: 18px; background: var(--depot); border: 2px solid #fff; border-radius: 3px; }
+  .medic { width: 20px; height: 20px; border-radius: 50%; background: var(--medic); border: 2px solid #fff; color: #fff;
+    font: 900 15px/16px system-ui; text-align: center; }
+  .medic.low { box-shadow: 0 0 0 4px var(--wounded); }
+  .flash { animation: flash 1s ease-out 3; } @keyframes flash { 0% { box-shadow: 0 0 0 0 var(--ok); } 100% { box-shadow: 0 0 0 26px transparent; } }
+  .lbl { background: transparent; border: 0; box-shadow: none; color: #fff; font: 600 13px system-ui; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  .lbl::before { display: none; }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--panel); color: var(--text); }
+  .leaflet-popup-content { font-size: 15px; }
+  .leaflet-popup-content table { border-collapse: collapse; } .leaflet-popup-content td { padding: 1px 8px 1px 0; }
+  .low-item { color: var(--wounded); font-weight: 700; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; grid-template-rows: 60vh auto; } aside { border-left: 0; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Medic Resupply Ops</h1>
+  <span id="conn" class="pill">connecting</span>
+  <button class="primary" id="demoBtn">Run demo scenario</button>
+  <button id="resetBtn" title="Reseed the world between rehearsals">Reset</button>
+  <div class="lat">
+    <div><span class="k">last decision</span><span class="v" id="latLast">--</span> <span class="k" style="display:inline">ms</span></div>
+    <div><span class="k">rolling avg</span><span class="v" id="latAvg">--</span> <span class="k" style="display:inline">ms</span></div>
+    <div><span class="k">drones free</span><span class="v" id="free">--</span></div>
+  </div>
+</header>
+<main>
+  <div id="mapwrap">
+    <div id="map"></div>
+    <div id="banner" title="click to dismiss"></div>
+    <div id="toast"></div>
+    <div class="legend">
+      <i style="background:var(--ok)"></i>OK<i style="background:var(--wounded)"></i>Wounded<i style="background:var(--critical)"></i>Critical<i style="background:var(--medic)"></i>Medic<i style="background:var(--depot);border-radius:2px"></i>Launch site
+    </div>
+  </div>
+  <aside>
+    <section>
+      <h2>Trigger</h2>
+      <div class="row"><select id="soldierSel"></select>
+        <button class="crit" data-sev="CRITICAL">Critical</button><button class="wnd" data-sev="WOUNDED">Wounded</button></div>
+      <div class="row"><select id="medicSel"></select><select id="itemSel"></select>
+        <input id="qty" type="number" min="1" value="2"><button id="lowBtn">Low stock</button></div>
+    </section>
+    <section id="queue"><h2>Waiting for a drone</h2><div class="empty">Nobody waiting</div></section>
+    <section style="border-bottom:0;padding-bottom:4px"><h2>Event log</h2></section>
+    <div id="log"></div>
+  </aside>
+</main>
+<script>
+// ---------------------------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------------------------
+// HOOK: backend address. Served by the API -> same host. Opened from disk -> localhost:8000.
+const API = location.protocol === 'file:' ? 'http://localhost:8000' : location.origin;
+const WS_URL = API.replace(/^http/, 'ws') + '/ws';
+const STATUS_COLOUR = { OK: '#3fb950', WOUNDED: '#f0b429', CRITICAL: '#f85149' };  // TUNE: soldier colours
+const DRONE_COLOUR = { IDLE: '#8b949e', EN_ROUTE: '#39d0d8', RETURNING: '#d2a8ff', CHARGING: '#f0b429' };  // TUNE
+const LATENCY_WINDOW = 20;   // TUNE: how many decisions the rolling average covers
+const BANNER_MS = 12000;     // TUNE: how long a no_dispatch banner stays up
+const LOG_MAX = 200;
+
+// ---------------------------------------------------------------------------------------------
+// State: plain objects keyed by id, rebuilt from each snapshot
+// ---------------------------------------------------------------------------------------------
+let S = { units: {}, personnel: {}, drones: {}, depots: {}, facilities: {} };
+const markers = { personnel: {}, drones: {}, depots: {} };
+const routes = {};          // request_id -> polyline
+const eta = {};             // drone_id -> {eta, at, rate}  (seconds, performance.now(), mission-s per real-s)
+const latencies = [];
+let mode = 'connecting';
+
+// ---------------------------------------------------------------------------------------------
+// Map
+// ---------------------------------------------------------------------------------------------
+const map = L.map('map', { zoomControl: true, preferCanvas: false }).setView([47.66, 35.6], 12);  // DEMO: sector centre
+// TUNE: dark basemap. Swap for 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' if CARTO is blocked.
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; OpenStreetMap contributors &copy; CARTO', maxZoom: 18, subdomains: 'abcd' }).addTo(map);
+const layers = {
+  zones: L.layerGroup().addTo(map), depots: L.layerGroup().addTo(map), routes: L.layerGroup().addTo(map),
+  personnel: L.layerGroup().addTo(map), drones: L.layerGroup().addTo(map), chain: L.layerGroup(),
+};
+L.control.layers(null, { 'Threat zones': layers.zones, 'Launch sites': layers.depots, 'Routes': layers.routes,
+  'Personnel': layers.personnel, 'Drones': layers.drones, 'Supply chain (rear)': layers.chain },
+  { collapsed: true, position: 'topleft' }).addTo(map);
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const clock = d => d.toLocaleTimeString([], { hour12: false });
+const fmtEta = s => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+const fmtItems = it => Object.entries(it || {}).map(([k, v]) => `${v}× ${k.replace(/_/g, ' ')}`).join(', ');
+const name = id => (S.personnel[id] && S.personnel[id].callsign) || (S.drones[id] && S.drones[id].callsign) || id;
+const unitName = p => (S.units[p.unit_id] && S.units[p.unit_id].callsign) || p.unit_id;
+
+function personPopup(p) {
+  let h = `<b>${esc(p.callsign)}</b> · ${esc(unitName(p))}<br>${p.kind} · <span class="sev-${p.status}">${p.status}</span>`;
+  if (p.kind === 'MEDIC') {
+    h += '<table>' + Object.entries(p.stock).map(([k, v]) => {
+      const low = v < (p.stock_threshold[k] || 0);
+      return `<tr class="${low ? 'low-item' : ''}"><td>${esc(k.replace(/_/g, ' '))}</td><td>${v}${low ? ' (low)' : ''}</td></tr>`;
+    }).join('') + '</table>';
+  }
+  return h;
+}
+const medicLow = p => Object.entries(p.stock).some(([k, v]) => v < (p.stock_threshold[k] || 0));
+
+function drawPerson(p) {
+  let m = markers.personnel[p.id];
+  if (p.kind === 'MEDIC') {
+    const icon = L.divIcon({ className: '', html: `<div class="medic ${medicLow(p) ? 'low' : ''}">+</div>`, iconSize: [20, 20], iconAnchor: [10, 10] });
+    if (!m) { m = markers.personnel[p.id] = L.marker([p.lat, p.lon], { icon, zIndexOffset: 500 }).addTo(layers.personnel); }
+    else { m.setIcon(icon); m.setLatLng([p.lat, p.lon]); }
+  } else {
+    const style = { radius: p.status === 'OK' ? 6 : 9, color: '#fff', weight: 1.5, fillColor: STATUS_COLOUR[p.status], fillOpacity: 1 };
+    if (!m) { m = markers.personnel[p.id] = L.circleMarker([p.lat, p.lon], style).addTo(layers.personnel); }
+    else { m.setStyle(style); m.setRadius(style.radius); m.setLatLng([p.lat, p.lon]); }
+  }
+  m.bindPopup(personPopup(p));
+}
+
+function droneIcon(d) {
+  const e = eta[d.id];
+  const badge = e && d.status === 'EN_ROUTE' ? `<span class="eta" data-eta="${d.id}">${fmtEta(e.eta)}</span>` : '';
+  return L.divIcon({ className: '', iconSize: null, iconAnchor: [10, 10],
+    html: `<div class="drone"><span class="dot" style="background:${DRONE_COLOUR[d.status] || '#888'}"></span>${esc(d.callsign)}${badge}</div>` });
+}
+function drawDrone(d) {
+  let m = markers.drones[d.id];
+  if (!m) { m = markers.drones[d.id] = L.marker([d.lat, d.lon], { icon: droneIcon(d), zIndexOffset: 1000 }).addTo(layers.drones); }
+  else { m.setLatLng([d.lat, d.lon]); m.setIcon(droneIcon(d)); }
+  m.bindPopup(`<b>${esc(d.callsign)}</b> · ${d.status}<br>range ${(d.range_m / 1000).toFixed(1)} km · ${d.speed_mps} m/s<br>${esc(fmtItems(d.payload)) || 'empty'}`);
+  updateFree();
+}
+function updateFree() {
+  const all = Object.values(S.drones);
+  document.getElementById('free').textContent = `${all.filter(d => d.status === 'IDLE').length}/${all.length}`;
+}
+
+function drawRoute(requestId, pts) {
+  if (routes[requestId]) layers.routes.removeLayer(routes[requestId]);
+  routes[requestId] = L.polyline(pts, { color: '#39d0d8', weight: 4, opacity: .9, dashArray: '10 6' }).addTo(layers.routes);
+}
+function clearRoute(requestId) {
+  if (routes[requestId]) { layers.routes.removeLayer(routes[requestId]); delete routes[requestId]; }
+}
+
+// HOOK: the `snapshot` message (and GET /state, and the mock) all land here.
+function loadSnapshot(data) {
+  Object.values(layers).forEach(l => l.clearLayers());
+  for (const k in markers) markers[k] = {};
+  for (const k in routes) delete routes[k];
+  const byId = arr => Object.fromEntries((arr || []).map(x => [x.id, x]));
+  S = { units: byId(data.units), personnel: byId(data.personnel), drones: byId(data.drones),
+        depots: byId(data.depots), facilities: byId(data.facilities) };
+
+  for (const z of data.no_fly_zones || []) {
+    L.polygon(z.polygon, { color: '#f85149', weight: 2, fillColor: '#f85149', fillOpacity: .18, dashArray: '6 4' })
+      .bindTooltip(z.name, { permanent: true, direction: 'center', className: 'lbl' }).addTo(layers.zones);
+  }
+  for (const d of Object.values(S.depots)) {
+    L.marker([d.lat, d.lon], { icon: L.divIcon({ className: '', html: '<div class="depot"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }) })
+      .bindTooltip(d.name, { permanent: true, direction: 'bottom', offset: [0, 10], className: 'lbl' })
+      .bindPopup(`<b>${esc(d.name)}</b><br>${esc(fmtItems(d.stock))}`).addTo(layers.depots);
+  }
+  // Rear supply chain (off by default: it spans Poland to the front, so it zooms the map right out).
+  for (const f of Object.values(S.facilities)) {
+    L.circleMarker([f.lat, f.lon], { radius: 7, color: '#fff', weight: 1, fillColor: f.kind === 'HOSPITAL' ? '#f778ba' : '#d2a8ff', fillOpacity: 1 })
+      .bindTooltip(f.name, { direction: 'top', className: 'lbl' }).bindPopup(`<b>${esc(f.name)}</b><br>${f.kind}<br>${esc(fmtItems(f.stock))}`).addTo(layers.chain);
+  }
+  const pos = id => S.facilities[id] || S.depots[id];
+  for (const l of data.supply_links || []) {
+    const a = pos(l.src_id), b = pos(l.dst_id);
+    if (a && b) L.polyline([[a.lat, a.lon], [b.lat, b.lon]], { color: '#d2a8ff', weight: 2, opacity: .6, dashArray: '2 6' })
+      .bindTooltip(`${l.mode} · ${l.lead_time_min} min`, { className: 'lbl' }).addTo(layers.chain);
+  }
+  Object.values(S.personnel).forEach(drawPerson);
+  Object.values(S.drones).forEach(drawDrone);
+  for (const d of data.dispatches || []) { drawRoute(d.request_id, d.route); eta[d.drone_id] = { eta: d.eta_s, at: performance.now(), rate: 1 }; }
+  fillTriggers();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Live messages (contracts/messages.md)
+// ---------------------------------------------------------------------------------------------
+const handlers = {
+  snapshot: loadSnapshot,
+  event(e) {
+    const p = S.personnel[e.subject_id];
+    if (p && e.type === 'CASUALTY') { p.status = e.severity; drawPerson(p); }
+    const what = e.type === 'CASUALTY' ? `<span class="sev-${e.severity}">${e.severity}</span> casualty` : `<span class="sev-LOW_STOCK">LOW STOCK</span> ${esc(fmtItems(e.items))}`;
+    log(`${what} · ${esc(name(e.subject_id))}${p ? ' · ' + esc(unitName(p)) : ''}`);
+  },
+  dispatch(d) {
+    const dr = S.drones[d.drone_id];
+    drawRoute(d.request_id, d.route);
+    eta[d.drone_id] = { eta: d.eta_s, at: performance.now(), rate: 1, req: d.request_id };
+    if (dr) { dr.status = 'EN_ROUTE'; drawDrone(dr); }
+    const bend = d.route.length > 2 ? ' · rerouted round threat zone' : '';
+    log(`<b>${esc(name(d.drone_id))}</b> → ${esc(name(d.recipient_id))} · ETA ${fmtEta(d.eta_s)} · ${(d.distance_m / 1000).toFixed(1)} km${bend}`, 'dispatch', d.latency_ms);
+    addLatency(d.latency_ms);
+  },
+  no_dispatch(n) {
+    log(`No drone for ${esc(name(n.recipient_id))}: ${esc(n.reason)}`, 'nod', n.latency_ms);
+    addLatency(n.latency_ms);
+    showBanner(n);
+  },
+  drone_update(u) {
+    const d = S.drones[u.drone_id]; if (!d) return;
+    const now = performance.now(), prev = eta[u.drone_id];
+    if (u.eta_s != null) {
+      // Learn how fast mission time runs (the dev server plays flights at x10) so the badge counts smoothly.
+      let rate = 1;
+      if (prev && prev.req === u.request_id && prev.status === u.status && now > prev.at && prev.eta > u.eta_s)
+        rate = 0.5 * prev.rate + 0.5 * ((prev.eta - u.eta_s) / ((now - prev.at) / 1000));
+      eta[u.drone_id] = { eta: u.eta_s, at: now, rate, req: u.request_id, status: u.status };
+    } else delete eta[u.drone_id];
+    Object.assign(d, { lat: u.lat, lon: u.lon, status: u.status });
+    drawDrone(d);
+  },
+  delivered(x) {
+    clearRoute(x.request_id);
+    const p = S.personnel[x.recipient_id];
+    if (p && p.kind === 'MEDIC') for (const [k, v] of Object.entries(x.items)) p.stock[k] = (p.stock[k] || 0) + v;
+    if (p) { drawPerson(p); flash(p); }
+    log(`Delivered to ${esc(name(x.recipient_id))} by ${esc(name(x.drone_id))}: ${esc(fmtItems(x.items))}`, 'deliv');
+  },
+  queue(q) {
+    const el = document.getElementById('queue');
+    el.innerHTML = '<h2>Waiting for a drone</h2>' + (q.pending.length ? q.pending.map(r =>
+      `<div class="q"><span>${r.position}. <span class="sev-${r.severity || 'LOW_STOCK'}">${r.severity || 'LOW STOCK'}</span> ${esc(name(r.subject_id))}</span><span class="t">${clock(new Date(r.ts * 1000))}</span></div>`).join('')
+      : '<div class="empty">Nobody waiting</div>');
+  },
+};
+
+function flash(p) {
+  const m = markers.personnel[p.id];
+  const ring = L.circleMarker([p.lat, p.lon], { radius: 10, color: '#3fb950', weight: 4, fill: false }).addTo(map);
+  let r = 10; const t = setInterval(() => { r += 3; ring.setRadius(r); ring.setStyle({ opacity: Math.max(0, 1 - (r - 10) / 40) }); if (r > 50) { clearInterval(t); map.removeLayer(ring); } }, 40);
+  if (m && m.openPopup) m.openPopup();
+}
+
+function addLatency(ms) {
+  if (ms == null) return;
+  latencies.push(ms); if (latencies.length > LATENCY_WINDOW) latencies.shift();
+  document.getElementById('latLast').textContent = ms.toFixed(1);
+  document.getElementById('latAvg').textContent = (latencies.reduce((a, b) => a + b, 0) / latencies.length).toFixed(1);
+}
+
+function log(html, cls = '', ms = null) {
+  const el = document.getElementById('log');
+  const row = document.createElement('div');
+  row.className = 'e ' + cls;
+  row.innerHTML = `<span class="t">${clock(new Date())}</span><span>${html}</span><span class="ms">${ms != null ? ms.toFixed(1) + ' ms' : ''}</span>`;
+  el.prepend(row);
+  while (el.children.length > LOG_MAX) el.lastChild.remove();
+}
+
+let bannerTimer;
+function showBanner(n) {
+  const b = document.getElementById('banner');
+  const alt = n.nearest_alternative && n.nearest_alternative.note ? `<div class="alt">Suggested: ${esc(n.nearest_alternative.note)}</div>` : '';
+  b.innerHTML = `<b>No drone for ${esc(name(n.recipient_id))}</b> (${esc(n.reason_code.replace('_', ' '))}): ${esc(n.reason)}${alt}`;
+  b.style.display = 'block';
+  clearTimeout(bannerTimer); bannerTimer = setTimeout(() => b.style.display = 'none', BANNER_MS);
+}
+document.getElementById('banner').onclick = e => e.currentTarget.style.display = 'none';
+
+function toast(text) {
+  const t = document.getElementById('toast'); t.textContent = text; t.style.display = 'block';
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 4000);
+}
+
+// ETA badges count down every 250 ms between server updates.
+setInterval(() => {
+  const now = performance.now();
+  document.querySelectorAll('[data-eta]').forEach(el => {
+    const e = eta[el.dataset.eta]; if (!e) return;
+    el.textContent = fmtEta(e.eta - e.rate * (now - e.at) / 1000);
+  });
+}, 250);
+
+// ---------------------------------------------------------------------------------------------
+// Connection: WebSocket with auto-reconnect, mock snapshot when the backend is down
+// ---------------------------------------------------------------------------------------------
+function setMode(m) {
+  mode = m;
+  const el = document.getElementById('conn');
+  el.className = 'pill ' + (m === 'live' ? 'live' : m === 'mock' ? 'mock' : '');
+  el.textContent = m === 'live' ? 'live' : m === 'mock' ? 'offline: mock data' : 'connecting';
+}
+function connect() {
+  let ws;
+  try { ws = new WebSocket(WS_URL); } catch (e) { return fallback(); }
+  ws.onopen = () => setMode('live');
+  ws.onmessage = ev => { const m = JSON.parse(ev.data); (handlers[m.type] || (() => {}))(m.data); };
+  ws.onclose = () => { if (mode !== 'mock') fallback(); setTimeout(connect, 3000); };  // TUNE: reconnect delay
+}
+function fallback() {
+  if (mode === 'mock') return;
+  setMode('mock');
+  if (window.MOCK_SNAPSHOT) loadSnapshot(window.MOCK_SNAPSHOT);
+}
+
+// HOOK: everything the operator triggers goes through POST /events, exactly like the simulator.
+async function post(path, body) {
+  try {
+    const r = await fetch(API + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    if (!r.ok) toast(`${path}: ${r.status} ${await r.text()}`);
+  } catch (e) { toast('Backend not reachable: start it with ./start.sh'); }
+}
+
+function fillTriggers() {
+  const people = Object.values(S.personnel);
+  const opts = list => list.map(p => `<option value="${p.id}">${esc(p.callsign)}</option>`).join('');
+  document.getElementById('soldierSel').innerHTML = opts(people.filter(p => p.kind === 'SOLDIER'));
+  document.getElementById('medicSel').innerHTML = opts(people.filter(p => p.kind === 'MEDIC'));
+  const items = new Set(people.flatMap(p => Object.keys(p.stock || {})));
+  document.getElementById('itemSel').innerHTML = [...items].map(i => `<option value="${i}">${i.replace(/_/g, ' ')}</option>`).join('');
+}
+document.querySelectorAll('[data-sev]').forEach(b => b.onclick = () =>
+  post('/events', { type: 'CASUALTY', subject_id: document.getElementById('soldierSel').value, severity: b.dataset.sev }));
+document.getElementById('lowBtn').onclick = () => post('/events', { type: 'LOW_STOCK',
+  subject_id: document.getElementById('medicSel').value,
+  items: { [document.getElementById('itemSel').value]: +document.getElementById('qty').value || 1 } });
+document.getElementById('demoBtn').onclick = () => post('/scenario/demo');                       // DEMO
+document.getElementById('resetBtn').onclick = () => { document.getElementById('log').innerHTML = ''; latencies.length = 0; post('/reset'); };
+
+if (window.MOCK_SNAPSHOT) loadSnapshot(window.MOCK_SNAPSHOT);  // draw something instantly, the socket replaces it
+connect();
+</script>
+</body>
+</html>

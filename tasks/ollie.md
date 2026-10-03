@@ -32,10 +32,12 @@ Ollie makes TuringDB the real store behind `GraphRepo` by 14:00 and builds the n
 
 ### 18:00 to 20:00: No-fly routing (`routing.py`)
 
+> Done 2026-10-03 as a visibility graph + A* instead of a grid (exact shortest path, nothing to store in the graph). See docs/foundations-guide.md section 9.
+
 - [ ] Waypoint grid at about 500 m spacing over the area, dropping points inside no-fly polygons
 - [ ] Store waypoints and `ROUTE_SEGMENT` edges in the logistics graph; load once at startup
-- [ ] A* in Python: `route(a, b)` returns the list of [lat, lon] points and the length in metres
-- [ ] Done when: a route between two points on either side of a no-fly zone bends around it
+- [x] A* in Python: `route(a, b)` returns the list of [lat, lon] points and the length in metres
+- [x] Done when: a route between two points on either side of a no-fly zone bends around it
 - [ ] 20:00: TuringDB final call with Zak
 
 ### 20:00 to 22:00: Query log

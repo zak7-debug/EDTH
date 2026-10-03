@@ -119,8 +119,8 @@ The real-time dispatch path is unchanged: drones still launch from depots, and t
 ## 7. Skeleton, start script and tests
 
 - `start.sh`: creates the venv on first run, starts TuringDB in memory with its UI, and runs the API on port 8000. `EDTH_REPO=memory ./start.sh` runs without a database.
-- `backend/app/main.py`: a stub (`/health`, `/state`) so the start script works today. Sasank replaces it.
-- `dispatch.py`, `routing.py`, `sim/simulator.py`, `frontend/`: empty placeholders owned by Zak, Ollie, Sasank and Arnav.
+- `backend/app/main.py`: a stub (`/health`, `/state`). Sasank replaces it; until then `start.sh` runs `backend/app/dev_server.py` (section 10).
+- `sim/simulator.py`: placeholder owned by Sasank.
 - `tests/`: `pytest` runs every repo test against both repos. The TuringDB run uses the embedded engine, so no server is needed. `TURINGDB_TEST_HOST=http://localhost:6666 pytest` runs them against a live server.
 
 ## 8. Dispatch engine (`backend/app/dispatch.py`)
@@ -141,5 +141,45 @@ The real-time dispatch path is unchanged: drones still launch from depots, and t
 
 **How the backend uses it:** `handle(event)`, then broadcast the result, then `record(result, event)` writes it to the graph. When a drone lands, `drone_freed(id)` releases it and returns any queued requests it can now serve.
 
-**To change:** the `NEEDS`, `RANGE_SAFETY` and `RELOAD_S` constants at the top. Change the selection rule in the sort key in `_try_dispatch` (step 3). Plug in routing with `DispatchEngine(repo, route_fn=routing.route)`.
+**To change:** the `NEEDS`, `RANGE_SAFETY` and `RELOAD_S` constants at the top. Change the selection rule in the sort key in `_try_dispatch` (step 3). Routing round threat zones is on by default (section 9); `DispatchEngine(repo, route_fn=straight_line)` turns it off.
+
+## 9. Routing round threat zones (`backend/app/routing.py`)
+
+**What it does:** `Router(zones).route(a, b)` returns the shortest path from a to b that doesn't enter any no-fly or threat zone, as `(waypoints, metres)`.
+- If the straight line is clear, it flies straight (most requests).
+- Otherwise it builds a small visibility graph: start, goal, and every zone corner pushed `CLEARANCE_M` (250 m) outwards. Two points are linked if the line between them is clear. A* over those links gives the shortest safe path.
+- A route costs under half a millisecond, so it adds nothing noticeable to the dispatch latency.
+
+**Why it matters for the final product:** the seed puts the EW jamming zone between Launch Site North and every squad, so HAWK drones visibly bend round it on the map, and their ETAs and range checks use the real detour length. The event log marks those dispatches "rerouted round threat zone".
+
+**How it is wired:** `DispatchEngine` builds a `Router` from the graph's `NoFlyZone` nodes when it starts. If you add a zone mid-demo, restart (or `POST /reset`).
+
+**To change:** `CLEARANCE_M` for a wider berth. Zones live in `NO_FLY_ZONES` in `seed.py`. This replaces the planned 500 m waypoint grid: a visibility graph gives the exact shortest path with about a dozen nodes, so there was nothing worth storing in TuringDB.
+
+## 10. Live API and flights (`backend/app/dev_server.py`, `backend/app/flights.py`)
+
+**What it does:** a complete API that follows `contracts/messages.md`, written so the dashboard runs end to end before Sasank's `main.py` lands.
+- `POST /events` takes an event, broadcasts it, times the decision, broadcasts `dispatch` or `no_dispatch`, then writes to the graph. Partial events are fine: the trigger panel only sends type, subject, severity and items, and the server fills id, time and position.
+- `/ws` sends a snapshot and the queue on connect, then every live message.
+- `POST /scenario/demo` plays `DEMO_SCRIPT`; `POST /reset` reseeds between rehearsals.
+- `FlightTracker` (flights.py) flies each drone along its route every `TICK_S` (0.5 s): `drone_update` while flying, `delivered` on arrival (moves the items into a medic's stock in the graph), then back to its home launch site, battery swap and reload, then `drone_freed()` serves the queue.
+
+**Why it matters for the final product:** this is what makes the map move. `EDTH_SIM_SPEED` (default 10) plays flights ten times faster so a delivery takes about a minute on stage; ETAs on the wire stay in real mission seconds.
+
+**To change:** the demo story is `DEMO_SCRIPT` at the top of dev_server.py (seconds after start, event). Flight speed-up is `SIM_SPEED` in flights.py or the `EDTH_SIM_SPEED` env var. Sasank can lift any of it into `main.py`, then run `EDTH_APP=backend.app.main:app ./start.sh`.
+
+**The demo scenario, as it plays (about 90 s at 10x):**
+1. CRITICAL casualty in BADGER 1: FALCON 1 from Launch Site West flies straight.
+2. CRITICAL casualty in BADGER 2: HAWK 1 from Launch Site North bends round the jamming zone.
+3. Two requests at the same instant (medic BADGER 2-DOC low on blood, a WOUNDED soldier in BADGER 3): they get different drones.
+4. A CRITICAL casualty in BADGER 3 is served by OWL 1 from the rear site.
+5. Two more casualties find every suitable drone busy: they queue in triage order and are served as drones come home.
+
+## 11. Dashboard (`frontend/index.html`)
+
+**What it does:** the one screen the judges watch. A dark Leaflet map with threat zones, launch sites, soldiers coloured by status (green OK, amber WOUNDED, red CRITICAL), medics as blue crosses (amber ring when stock is low; click for stock), and drones with callsigns and live ETA badges. The header shows connection state, the last and rolling-average decision time in ms, and free drones. The side panel has the trigger controls, the waiting queue and the event log. A red banner explains any `no_dispatch` with the suggested alternative. The layer control (top left) can show the rear supply chain from Poland to the front.
+
+**How it connects:** same host as the API, or `localhost:8000` when opened from disk. With no backend it draws `mock/snapshot.js` and says "offline: mock data". Leaflet is vendored in `frontend/vendor/leaflet` so only the map tiles need internet.
+
+**To change:** colours are CSS variables at the top and `STATUS_COLOUR` / `DRONE_COLOUR` in the script. One function per message type lives in `handlers`. After editing `seed.py`, run `python scripts/export_mock.py` to refresh the mock.
 

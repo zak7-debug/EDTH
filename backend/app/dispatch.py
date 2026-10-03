@@ -6,8 +6,8 @@ How it fits the product:
   graph. Writes come after the broadcast so they never sit on the latency path.
 - When a drone is back at a launch site, the API calls `engine.drone_freed(drone_id)`, which
   releases it and serves the triage queue first (CRITICAL, then WOUNDED, then LOW_STOCK).
-- Routing is pluggable: `route_fn(a, b) -> (points, metres)`. The default is a straight line;
-  Ollie's A* around threat zones (routing.py) drops in without changing anything here.
+- Routing is pluggable: `route_fn(a, b) -> (points, metres)`. The default is routing.Router, an A*
+  around the graph's no-fly / threat zones; pass `route_fn=straight_line` to switch it off.
 
 The hot path is one graph query (`find_candidate_drones`) plus Python maths, then one atomic
 `claim_drone` per attempt. Two simultaneous emergencies can't get the same drone: the loser's
@@ -32,6 +32,7 @@ from typing import Callable, Optional, Union
 
 from .models import Depot, Dispatch, Drone, Event, NoDispatch
 from .repo import GraphRepo
+from .routing import Router
 
 Point = tuple[float, float]  # (lat, lon) in decimal degrees
 RouteFn = Callable[[Point, Point], tuple[list[Point], float]]  # (from, to) -> (waypoints, metres)
@@ -61,7 +62,7 @@ def haversine_m(a: Point, b: Point) -> float:
 
 def straight_line(a: Point, b: Point) -> tuple[list[Point], float]:
     """Default route: fly direct. Ignores threat zones.
-    HOOK: replace with routing.route (A* around no-fly / threat zones) via DispatchEngine(route_fn=...)."""
+    Kept for tests and as a fallback: DispatchEngine(repo, route_fn=straight_line)."""
     return [a, b], haversine_m(a, b)
 
 
@@ -95,9 +96,11 @@ class _Queued:
 
 
 class DispatchEngine:
-    def __init__(self, repo: GraphRepo, route_fn: RouteFn = straight_line, clock=time.time):
+    def __init__(self, repo: GraphRepo, route_fn: Optional[RouteFn] = None, clock=time.time):
         self.repo = repo
-        self.route_fn = route_fn  # HOOK: routing.py's A* goes here
+        # HOOK: routing. Default = A* around the zones in the graph (routing.py), built once here.
+        # Restart the engine (or rebuild the Router) if zones change mid-demo.
+        self.route_fn = route_fn or Router.from_repo(repo).route
         self.clock = clock  # injectable so tests / replay mode can control timestamps
         self._queue: list[_Queued] = []  # heap of requests waiting for a drone
         self._seq = itertools.count()

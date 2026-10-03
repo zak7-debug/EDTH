@@ -20,4 +20,6 @@ fi
 
 # TODO(Sasank): also start sim/simulator.py once it exists.
 echo "Dashboard: http://localhost:8000   TuringDB UI: http://localhost:8080"
-uvicorn backend.app.main:app --host 0.0.0.0 --port "${PORT:-8000}"
+# HOOK: which API runs. The dev server is complete today; set EDTH_APP=backend.app.main:app once
+# Sasank's main.py has /events and /ws.
+uvicorn "${EDTH_APP:-backend.app.dev_server:app}" --host 0.0.0.0 --port "${PORT:-8000}"
