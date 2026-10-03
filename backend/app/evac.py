@@ -1,25 +1,24 @@
-"""Casualty evacuation: get each casualty to the fastest place that can treat them, and fly the kit
-they'll need there ahead of them.
+"""Casualty evacuation: get each casualty, once treated by their squad medic, to the fastest place
+that can treat them, by road.
 
 How it fits the product:
-- Every CASUALTY event starts two things at once (dev_server.process):
-    1. the drone dispatch (dispatch.py) that gets supplies to the point of injury in minutes, and
-    2. an evacuation (`start()` here) to a hospital or aid station.
+- Every CASUALTY event sets the soldier's status and starts an evacuation (`start()` here) to a
+  hospital or aid station (dev_server.process). It sends no drone: drones deliver to medics only,
+  when a medic asks for a restock.
 - Where to: every operational facility that can treat that severity and has a free bed is a
   candidate (CRITICAL needs surgery, so Role 2 or 3; WOUNDED can go to a Role 1 aid station).
-  Each candidate gets a ground route round the threat zones (the same Router the drones use);
-  the fastest arrival wins. The bed is counted as taken from that moment, so two casualties
+  Each candidate gets a road route round the threat zones (roads.py); the fastest arrival wins. The bed is counted as taken from that moment, so two casualties
   can't be promised the last bed.
 - Supplies ahead of the casualty: the destination's stock, minus kit already promised to casualties
-  on the way there, is checked against what this casualty will need (TREATMENT_KIT). Anything
-  missing goes out at once as a drone request to the facility, through the normal dispatch
-  engine, so it usually lands before the casualty does.
+  on the way there, is checked against what this casualty will need (TREATMENT_KIT) and any shortfall
+  is reported. With KIT_AHEAD_BY_DRONE on (off by default), it is also flown there ahead of them.
 - On arrival (`admitted`) the kit is used up from the facility's stock and the casualty is marked
   ADMITTED in the graph. If the destination is destroyed on the way, the casualty is diverted to
   the next-fastest one from where they are; if a new threat appears on their route, they detour.
 
-- The casualty only leaves once treated: the vehicle waits for the drone with their supplies to land
-  (WAITING_FOR_DRONE), then TREAT_S of treatment and loading (TREATING), then drives (MOVING).
+- The casualty only leaves once treated by their squad medic: if a drone is bringing the medic (or the
+  casualty) supplies, the vehicle waits for it to land (WAITING_FOR_DRONE); then TREAT_S of treatment
+  and loading (TREATING); then it drives (MOVING). Drones deliver to medics only (dev_server).
 - Ground routes follow roads and field tracks round the threat zones (roads.py), and the ETA is the
   driving time on them.
 
@@ -45,6 +44,9 @@ from .stock import StockKeeper, _fmt
 CASEVAC_SPEED_MPS = ROAD_KMH / 3.6
 # TUNE: mission seconds of treatment and loading after the drone with the casualty's supplies lands.
 TREAT_S = 600.0
+# TUNE: fly a casualty's missing kit to the destination hospital ahead of them. Off: drones deliver to
+# medics only (a casualty report never sends a drone); the shortfall is still reported.
+KIT_AHEAD_BY_DRONE = False
 LOAD_S = TREAT_S  # older name, kept for callers
 # TUNE: which treatment levels can take which severity (NATO roles: 1 aid station, 2 surgery, 3 hospital).
 ACCEPTS = {"CRITICAL": ("ROLE_2", "ROLE_3"), "WOUNDED": ("ROLE_1", "ROLE_2", "ROLE_3")}
@@ -72,6 +74,7 @@ class EvacTracker:
         self.clock = clock
         self.trips: dict[str, _Trip] = {}  # evac_id -> trip in progress
         self.roads = net_for(self.repo.list_no_fly_zones())  # HOOK: rebuilt in reroute() when a threat appears
+        self._medic_cache: dict[str, set[str]] = {}  # soldier -> their squad's medic(s)
         self._ids = itertools.count(1)
 
     # ---------------------------------------------------------------------------------------
@@ -97,20 +100,25 @@ class EvacTracker:
         f, points, dist, eta = best
         kit = dict(TREATMENT_KIT.get(severity, {}))
         shortfall = self._shortfall(f, kit)
+        fly_kit = bool(shortfall) and KIT_AHEAD_BY_DRONE
         evac = Evacuation(f"evac-{next(self._ids)}", person.id, f.id, severity, points, round(dist, 1),
                           round(eta, 1), self.clock(), kit, shortfall)
-        if shortfall:
+        if fly_kit:
             evac.resupply_request_id = f"{evac.evac_id}-kit"
         self.repo.start_evacuation(evac)  # graph: EVACUATED_TO edge + one bed taken
         drive_s = eta - load_s - (wait_s or 0.0)
         self.trips[evac.evac_id] = _Trip(evac, _Flight(evac.evac_id, person.id, [tuple(p) for p in points],
                                                        dist / drive_s if drive_s > 0 else CASEVAC_SPEED_MPS,
                                                        "EN_ROUTE"), load_s, treating=treating or wait_s is None)
-        kit_msgs, kit_eta = self._send_kit(evac, f) if shortfall else ([], None)
+        kit_msgs, kit_eta = self._send_kit(evac, f) if fly_kit else ([], None)
         note = f"{person.callsign} to {f.name} by road, {eta / 60:.0f} min"
         if not treating and wait_s is not None:
-            note += f" (leaves {TREAT_S / 60:.0f} min after their drone lands)"
-        if shortfall:
+            note += f" (leaves once treated, {TREAT_S / 60:.0f} min after the medic's drone lands)"
+        elif not treating:
+            note += f" (leaves once treated, in {TREAT_S / 60:.0f} min)"
+        if shortfall and not fly_kit:
+            note += f". Short of {_fmt(shortfall)} there"
+        elif shortfall:
             note += f". Short of {_fmt(shortfall)} there: " + (
                 f"drone lands {kit_eta / 60:.0f} min ahead of them" if kit_eta is not None and kit_eta < eta
                 else f"drone lands in {kit_eta / 60:.0f} min" if kit_eta is not None else "no drone free yet, queued")
@@ -132,14 +140,20 @@ class EvacTracker:
         return best
 
     def _drone_wait_s(self, person_id: str) -> Optional[float]:
-        """Mission seconds until the drone with this casualty's supplies lands: its flight's time left,
-        0 if it is queued for a drone (unknown yet), None if no drone is coming (treat straight away)."""
-        for fl in self.flights.flights.values():
-            if fl.phase == "EN_ROUTE" and fl.dispatch and fl.dispatch.recipient_id == person_id:
-                return (fl.total_m - fl.flown_m) / fl.speed_mps
-        if any(e.subject_id == person_id for e in self.engine.pending()):
-            return 0.0
-        return None
+        """Mission seconds until the drone bringing supplies to this casualty's medic (or to the casualty)
+        lands, or None if no drone is in the air for them (the medic treats them straight away with what
+        they have; a request still waiting in the queue doesn't hold an evacuation up)."""
+        who = {person_id} | self._medics_of(person_id)
+        flying = [(fl.total_m - fl.flown_m) / fl.speed_mps for fl in self.flights.flights.values()
+                  if fl.phase == "EN_ROUTE" and fl.dispatch and fl.dispatch.recipient_id in who]
+        return min(flying) if flying else None  # a request still queued doesn't hold the casualty up
+
+    def _medics_of(self, person_id: str) -> set[str]:
+        if person_id not in self._medic_cache:
+            p = self.repo.get_person(person_id)
+            self._medic_cache[person_id] = {m.id for m in self.repo.list_personnel()
+                                            if p and m.kind == "MEDIC" and m.unit_id == p.unit_id}
+        return self._medic_cache[person_id]
 
     def _shortfall(self, f: Facility, kit: dict[str, int]) -> dict[str, int]:
         """What `f` is missing for this kit, after setting aside kit for casualties already heading there."""
@@ -188,7 +202,8 @@ class EvacTracker:
             lat, lon = t.flight.position()
             eta = t.load_left_s + (t.flight.total_m - t.flight.flown_m) / t.flight.speed_mps
             out.append(evac_update_msg(t.evac.evac_id, t.evac.person_id, lat, lon,
-                                       "TREATING" if t.load_left_s > 0 else "MOVING", eta))
+                                       "TREATING" if t.load_left_s > 0 else "MOVING", eta,
+                                       treated=t.load_left_s <= 0))
             if t.load_left_s <= 0 and t.flight.flown_m >= t.flight.total_m:
                 out += self._admit(t)
         return out

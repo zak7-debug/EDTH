@@ -119,11 +119,13 @@ def evacuation_msg(evac, facility_name: Optional[str], kit_eta_s: Optional[float
                               "note": note, "reason": reason, "diverted_from": None})
 
 
-def evac_update_msg(evac_id: str, person_id: str, lat: float, lon: float, phase: str, eta_s: float) -> dict:
+def evac_update_msg(evac_id: str, person_id: str, lat: float, lon: float, phase: str, eta_s: float,
+                    treated: bool = False) -> dict:
     """Where an evacuation is now. phase: WAITING_FOR_DRONE (the casualty's supplies haven't landed),
-    TREATING (treated and loaded, TREAT_S after the drone lands) or MOVING (by road)."""
+    TREATING (treated and loaded, TREAT_S after the drone lands) or MOVING (by road). `treated` turns true
+    once the medic's TREAT_S is up: the dashboard marks the soldier treated."""
     return msg("evac_update", {"evac_id": evac_id, "person_id": person_id, "lat": lat, "lon": lon,
-                               "phase": phase, "eta_s": round(eta_s, 1)})
+                               "phase": phase, "eta_s": round(eta_s, 1), "treated": treated})
 
 
 def admitted_msg(evac, facility_name: str, kit_used: dict, kit_short: dict, beds_used: int, beds: int) -> dict:

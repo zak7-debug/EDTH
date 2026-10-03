@@ -38,7 +38,8 @@ def test_critical_goes_to_surgery_wounded_to_aid_station(repo):
     assert evac.start(repo.get_person("sol-03"), "CRITICAL") == []  # already on the way
 
 
-def test_missing_kit_is_flown_ahead(repo):
+def test_missing_kit_is_flown_ahead(repo, monkeypatch):
+    monkeypatch.setattr("backend.app.evac.KIT_AHEAD_BY_DRONE", True)  # off in the demo: drones go to medics only
     _, engine, flights, evac = world(repo)
     msgs = evac.start(repo.get_person("sol-10"), "WOUNDED")
     ev = msgs[0]["data"]
@@ -49,7 +50,8 @@ def test_missing_kit_is_flown_ahead(repo):
     assert msgs[1]["data"]["drone_id"] in flights.flights
 
 
-def test_full_trip_admits_and_uses_kit(repo):
+def test_full_trip_admits_and_uses_kit(repo, monkeypatch):
+    monkeypatch.setattr("backend.app.evac.KIT_AHEAD_BY_DRONE", True)
     clock, _, _, evac = world(repo)
     evac.start(repo.get_person("sol-10"), "WOUNDED")
     kinds = []
@@ -80,6 +82,12 @@ def test_full_beds_and_promised_kit(repo):
         evac.start(repo.get_person(pid), "WOUNDED")
     fifth = evac.start(repo.get_person("sol-14"), "WOUNDED")
     assert fifth[0]["data"]["facility_id"] != "aid-01"  # its 4 beds are taken
+
+
+def test_missing_kit_is_not_flown_by_default(repo):
+    _, _, flights, evac = world(repo)
+    msgs = evac.start(repo.get_person("sol-10"), "WOUNDED")
+    assert msgs[0]["data"]["shortfall"] == {"chest_seal": 1} and len(msgs) == 1 and not flights.flights
 
 
 def test_destroyed_destination_diverts(repo):

@@ -398,7 +398,7 @@ const name = id => (S.personnel[id] && S.personnel[id].callsign) || (S.drones[id
 const unitName = p => (S.units[p.unit_id] && S.units[p.unit_id].callsign) || p.unit_id;
 
 function personPopup(p) {
-  let h = `<b>${esc(p.callsign)}</b> · ${esc(unitName(p))}<br>${p.kind} · <span class="sev-${p.status}">${p.status}</span>`;
+  let h = `<b>${esc(p.callsign)}</b> · ${esc(unitName(p))}<br>${p.kind} · <span class="sev-${p.status}">${p.status}</span>${p.treated ? ' · <b>treated</b>' : ''}`;
   if (p.kind === 'MEDIC') {
     h += '<table>' + Object.entries(p.stock).map(([k, v]) => {
       const low = v < (p.stock_threshold[k] || 0);
@@ -416,7 +416,9 @@ function drawPerson(p) {
     if (!m) { m = markers.personnel[p.id] = L.marker([p.lat, p.lon], { icon, zIndexOffset: 500 }).addTo(layers.personnel); }
     else { m.setIcon(icon); m.setLatLng([p.lat, p.lon]); }
   } else {
-    const style = { radius: p.status === 'OK' ? 7 : 11, color: '#fff', weight: 2, fillColor: STATUS_COLOUR[p.status], fillOpacity: 1 };
+    // A treated casualty keeps their status colour, with a green ring (evac_update.treated).
+    const style = { radius: p.status === 'OK' ? 7 : 11, color: p.treated ? '#3fb950' : '#fff', weight: p.treated ? 4 : 2,
+      fillColor: STATUS_COLOUR[p.status], fillOpacity: 1 };
     if (!m) { m = markers.personnel[p.id] = L.circleMarker([p.lat, p.lon], style).addTo(layers.personnel); }
     else { m.setStyle(style); m.setRadius(style.radius); m.setLatLng([p.lat, p.lon]); }
   }
@@ -593,7 +595,7 @@ const handlers = {
   snapshot: loadSnapshot,
   event(e) {
     const p = S.personnel[e.subject_id];
-    if (p && e.type === 'CASUALTY') { p.status = e.severity; drawPerson(p); }
+    if (p && e.type === 'CASUALTY') { p.status = e.severity; p.treated = false; drawPerson(p); }
     const what = e.type === 'CASUALTY' ? `<span class="sev-${e.severity}">${e.severity}</span> casualty` : `<span class="sev-LOW_STOCK">LOW STOCK</span> ${esc(fmtItems(e.items))}`;
     log(`${what} · ${esc(name(e.subject_id))}${p ? ' · ' + esc(unitName(p)) : ''}`);
   },
@@ -765,6 +767,10 @@ const handlers = {
     Object.assign(ev, { eta: u.eta_s, at: now, rate, phase: u.phase });
     if (phaseChanged) renderMissions();
     const p = S.personnel[u.person_id];
+    if (p && u.treated && !p.treated) {
+      p.treated = true; drawPerson(p);
+      log(`<b>${esc(p.callsign)}</b> treated by their medic (${esc(p.status)}), leaving by road for ${esc(name(ev.to))}.`, 'evac');
+    }
     if (p && u.phase === 'MOVING') { p.lat = u.lat; p.lon = u.lon; const m = markers.personnel[p.id]; if (m) m.setLatLng([u.lat, u.lon]); }
   },
   admitted(a) {
@@ -857,7 +863,7 @@ function renderMissions() {
   for (const ev of Object.values(evacs)) {
     const p = S.personnel[ev.person_id];
     rows.push([etaNow(ev) + 1e6, `<div class="m evac"><span class="big" data-evac="${ev.id}">${fmtEta(etaNow(ev))}</span><div>
-      <div class="who" title="casualty evacuation by road">${esc(p ? p.callsign : ev.person_id)} <span class="to">${ev.phase === 'WAITING_FOR_DRONE' ? 'waiting for drone, then' : ev.phase === 'TREATING' ? 'being treated, then' : '→'} by road to</span> ${esc(name(ev.to).replace(/ \(.*\)/, '').replace(/ (field hospital|aid station)$/, ''))}</div></div></div>`]);
+      <div class="who" title="casualty evacuation by road">${esc(p ? p.callsign : ev.person_id)} <span class="to">${ev.phase === 'WAITING_FOR_DRONE' ? "waiting for medic's drone, then" : ev.phase === 'TREATING' ? 'being treated, then' : 'treated →'} by road to</span> ${esc(name(ev.to).replace(/ \(.*\)/, '').replace(/ (field hospital|aid station)$/, ''))}</div></div></div>`]);
   }
   rows.sort((a, b) => a[0] - b[0]);
   document.getElementById('missions').innerHTML = '<h2>In the air and on the road</h2>' +

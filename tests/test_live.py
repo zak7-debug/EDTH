@@ -51,16 +51,20 @@ def test_dev_server_event_roundtrip(monkeypatch):
             stock = ws.receive_json()
             assert stock["type"] == "stock_update"
             assert [o["depot_id"] for o in stock["data"]["orders"]] == ["dep-02"]  # West reorders blood at start
+            # A casualty sets the soldier's status and starts their evacuation: no drone (medics only).
             r = client.post("/events", json={"type": "CASUALTY", "subject_id": "sol-10", "severity": "CRITICAL"})
+            assert r.status_code == 200 and r.json()["status"] == "CRITICAL" and "drone_id" not in r.json()
+            assert ws.receive_json()["type"] == "event"
+            m = ws.receive_json()
+            assert m["type"] == "evacuation" and m["data"]["facility_id"] == "hos-01"  # CRITICAL -> Role 2
+            assert dev_server.world.repo.get_person("sol-10").status == "CRITICAL"
+            # The squad medic asks for a restock: that gets the drone.
+            r = client.post("/events", json={"type": "LOW_STOCK", "subject_id": "med-2", "items": {"blood_oneg": 2},
+                                             "urgency": "CRITICAL"})
             assert r.status_code == 200 and r.json()["drone_id"]
             assert ws.receive_json()["type"] == "event"
             d = ws.receive_json()
             assert d["type"] == "dispatch" and d["data"]["latency_ms"] < 50
-            for _ in range(20):  # query_log x2, queue, then the evacuation
-                m = ws.receive_json()
-                if m["type"] == "evacuation":
-                    break
-            assert m["type"] == "evacuation" and m["data"]["facility_id"] == "hos-01"  # CRITICAL -> Role 2
         assert client.post("/events", json={"type": "CASUALTY", "subject_id": "nobody"}).status_code == 404
         r = client.post("/sites", json={"facility_id": "dc-02", "status": "DESTROYED"})
         assert r.status_code == 200 and r.json()["status"]["dc-02"] == "DESTROYED"

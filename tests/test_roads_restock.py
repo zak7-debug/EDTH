@@ -140,3 +140,18 @@ def test_non_urgent_waits_for_a_drone_coming_home(repo):
             repo.claim_drone(d.id, "busy")
     r = engine.handle(event(repo, "med-1", "LOW_STOCK", items={"blood_oneg": 1}, urgency="NON_URGENT"))
     assert isinstance(r, NoDispatch) and engine.queue_position(r.request_id) >= 1
+
+
+def test_casualty_waits_for_the_medics_drone_not_their_own(repo):
+    """Drones go to medics only: a casualty in a squad whose medic has a drone on the way waits for it."""
+    clock, engine, flights, evac = world(repo)
+    ev = event(repo, "med-2", "LOW_STOCK", items={"blood_oneg": 2}, urgency="CRITICAL")  # BADGER 2's medic
+    d = engine.handle(ev)
+    engine.record(d)
+    flights.start(d)
+    evac.start(repo.get_person("sol-10"), "CRITICAL")  # BADGER 2-4
+    trip = next(iter(evac.trips.values()))
+    u = [m for m in evac.step(1) if m["type"] == "evac_update"][0]["data"]
+    assert u["phase"] == "WAITING_FOR_DRONE" and not u["treated"]
+    other = evac.start(repo.get_person("sol-03"), "CRITICAL")  # BADGER 1: no drone coming, treated at once
+    assert "in 10 min" in other[0]["data"]["note"]
