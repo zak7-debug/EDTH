@@ -31,11 +31,13 @@ One socket. Every message is `{"type": ..., "data": ...}`.
 | `drone_update` | each tick, about 2/s per moving drone | `drone_id`, `lat`, `lon`, `status`, `eta_s`, `request_id` |
 | `delivered` | drone arrives | `request_id`, `drone_id`, `recipient_id`, `items`, `ts` |
 | `query_log` | after each decision and its writes | `request_id`, `phase` (`decide` = inside the timed decision, `record` = graph writes after the broadcast), `queries`: list of `{graph, kind (read/write), cypher, ms, rows}`, `total_ms`. Empty `queries` on the in-memory repo |
+| `zone_added` | a threat is reported (`POST /threats`) | the zone: `id`, `name`, `polygon` |
+| `reroute` | a drone in the air changes course round a new zone | `drone_id`, `request_id`, `phase` (`EN_ROUTE`/`RETURNING`), `route` (from its current position), `distance_m`, `eta_s`, `added_m`, `zone` (name) |
 | `queue` | queue changes | `pending`: list of `{request_id, type, severity, subject_id, items, ts, position}` in triage order |
 
 `latency_ms` is measured from the moment `POST /events` receives the event to the moment the dispatch decision is made, before any graph writes.
 
-REST besides events: `GET /state` returns the `snapshot` data; `POST /scenario/{name}` triggers a scripted demo scenario; `GET /health`.
+REST besides events: `POST /threats` (`{name, lat, lon, radius_m}` or `{name, polygon}`) reports a new threat zone; `GET /state` returns the `snapshot` data; `POST /scenario/{name}` triggers a scripted demo scenario; `GET /health`.
 
 Example `dispatch`:
 

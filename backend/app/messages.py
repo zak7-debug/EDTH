@@ -10,7 +10,7 @@ from typing import Iterable
 from .models import Dispatch, Event, NoDispatch
 from .repo import GraphRepo
 
-WS_TYPES = ("snapshot", "event", "dispatch", "no_dispatch", "drone_update", "delivered", "queue", "query_log")
+WS_TYPES = ("snapshot", "event", "dispatch", "no_dispatch", "drone_update", "delivered", "queue", "query_log", "zone_added", "reroute")
 
 
 def msg(type_: str, data: dict) -> dict:
@@ -70,4 +70,17 @@ def query_log_msg(request_id: str, phase: str, entries: list[dict]) -> dict:
     (the writes after the broadcast). entries come from querylog.capture()."""
     return msg("query_log", {"request_id": request_id, "phase": phase, "queries": entries,
                              "total_ms": round(sum(e["ms"] for e in entries), 2)})
+
+
+def zone_added_msg(zone) -> dict:
+    """A new threat / no-fly zone, drawn on the map the moment it is reported."""
+    return msg("zone_added", zone.to_dict())
+
+
+def reroute_msg(drone_id: str, request_id: str, phase: str, route: list, distance_m: float,
+                eta_s: float, added_m: float, zone_name: str) -> dict:
+    """A drone already in the air changed course round a new zone. route starts at its current position."""
+    return msg("reroute", {"drone_id": drone_id, "request_id": request_id, "phase": phase,
+                           "route": [list(p) for p in route], "distance_m": round(distance_m, 1),
+                           "eta_s": round(eta_s, 1), "added_m": round(added_m, 1), "zone": zone_name})
 

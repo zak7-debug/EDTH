@@ -352,6 +352,12 @@ class TuringRepo:
         return [NoFlyZone(r["id"], r["name"], [tuple(p) for p in json.loads(r["polygon_json"])])
                 for r in _rows(df)]
 
+    def add_no_fly_zone(self, zone):
+        # MERGE on id so redrawing a zone replaces its polygon instead of duplicating it.
+        self._write(self.g_logistics, [
+            f"MERGE (z:NoFlyZone {{id: {lit(zone.id)}}}) "
+            f"SET z.name = {lit(zone.name)}, z.polygon_json = {lit(json.dumps(zone.polygon))}"])
+
     def _payload_queries(self, drone_id: str, payload: dict[str, int], existing: dict[str, int]) -> list[str]:
         qs = []
         for item, qty in payload.items():

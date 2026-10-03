@@ -100,6 +100,9 @@
   .flash { animation: flash 1s ease-out 3; } @keyframes flash { 0% { box-shadow: 0 0 0 0 var(--ok); } 100% { box-shadow: 0 0 0 26px transparent; } }
   .lbl { background: transparent; border: 0; box-shadow: none; color: #fff; font: 600 13px system-ui; text-shadow: 0 0 3px #000, 0 0 3px #000; }
   .lbl::before { display: none; }
+  .new-zone { animation: zonepulse 1.2s ease-in-out 5; } @keyframes zonepulse { 50% { fill-opacity: .55; } }
+  #mapwrap.placing #map { cursor: crosshair; }
+  #log .reroute { color: var(--wounded); }
   .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--panel); color: var(--text); }
   .leaflet-popup-content { font-size: 15px; }
   .leaflet-popup-content table { border-collapse: collapse; } .leaflet-popup-content td { padding: 1px 8px 1px 0; }
@@ -112,6 +115,7 @@
   <h1>Medic Resupply Ops</h1>
   <span id="conn" class="pill">connecting</span>
   <button class="primary" id="demoBtn">Run demo scenario</button>
+  <button id="threatBtn" class="crit" title="Then click the map where the threat is">Report threat</button>
   <button id="resetBtn" title="Reseed the world between rehearsals">Reset</button>
   <div class="lat">
     <div><span class="k">last decision</span><span class="v" id="latLast">--</span> <span class="k" style="display:inline">ms</span></div>
@@ -330,6 +334,17 @@ const handlers = {
       x.queries.map(q => `<div class="cy" onclick="this.classList.toggle('open')"><span class="m">${q.ms.toFixed(1)} ms${q.rows != null ? ' · ' + q.rows + ' rows' : ''}</span>` +
         `<span class="${q.kind === 'write' ? 'w' : ''}">${esc(q.graph)}</span> ${esc(q.cypher)}</div>`).join('');
   },
+  zone_added(z) {
+    L.polygon(z.polygon, { color: '#f85149', weight: 3, fillColor: '#f85149', fillOpacity: .25, className: 'new-zone' })
+      .bindTooltip(z.name, { permanent: true, direction: 'center', className: 'lbl' }).addTo(layers.zones);
+    log(`<span class="sev-CRITICAL">THREAT</span> reported: ${esc(z.name)}`, 'nod');
+  },
+  // A drone already flying changed course: redraw from where it is now.
+  reroute(r) {
+    if (r.phase === 'EN_ROUTE') drawRoute(r.request_id, r.route);
+    eta[r.drone_id] = { eta: r.eta_s, at: performance.now(), rate: (eta[r.drone_id] || {}).rate || 1, req: r.request_id, status: r.phase };
+    log(`<b>${esc(name(r.drone_id))}</b> rerouted round ${esc(r.zone)}: ${r.added_m >= 0 ? '+' : ''}${(r.added_m / 1000).toFixed(1)} km, ETA now ${fmtEta(r.eta_s)}`, 'reroute');
+  },
   queue(q) {
     const el = document.getElementById('queue');
     el.innerHTML = '<h2>Waiting for a drone</h2>' + (q.pending.length ? q.pending.map(r =>
@@ -428,6 +443,14 @@ document.querySelectorAll('[data-sev]').forEach(b => b.onclick = () =>
 document.getElementById('lowBtn').onclick = () => post('/events', { type: 'LOW_STOCK',
   subject_id: document.getElementById('medicSel').value,
   items: { [document.getElementById('itemSel').value]: +document.getElementById('qty').value || 1 } });
+// Report threat: arm, then the next map click reports a threat there (TUNE: radius).
+document.getElementById('threatBtn').onclick = () => { document.getElementById('mapwrap').classList.add('placing'); toast('Click the map where the threat is'); };
+map.on('click', e => {
+  const wrap = document.getElementById('mapwrap');
+  if (!wrap.classList.contains('placing')) return;
+  wrap.classList.remove('placing');
+  post('/threats', { name: 'Reported threat', lat: e.latlng.lat, lon: e.latlng.lng, radius_m: 800 });
+});
 document.getElementById('demoBtn').onclick = () => post('/scenario/demo');                       // DEMO
 document.getElementById('resetBtn').onclick = () => { document.getElementById('log').innerHTML = ''; latencies.length = 0; post('/reset'); };
 

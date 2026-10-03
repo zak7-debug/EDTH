@@ -19,9 +19,9 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .dispatch import DispatchEngine
-from .messages import delivered_msg, dispatch_msg, drone_update_msg, queue_msg
-from .models import Dispatch
-from .routing import haversine_m
+from .messages import delivered_msg, dispatch_msg, drone_update_msg, queue_msg, reroute_msg
+from .models import Dispatch, NoFlyZone
+from .routing import Router, haversine_m
 
 Point = tuple[float, float]
 
@@ -59,6 +59,15 @@ class _Flight:
             left -= leg
         return self.points[-1]
 
+    def remaining(self) -> list[Point]:
+        """Current position followed by the waypoints still ahead."""
+        left = self.flown_m
+        for i, leg in enumerate(self.legs):
+            if left < leg:
+                return [self.position()] + self.points[i + 1:]
+            left -= leg
+        return [self.points[-1]]
+
 
 class FlightTracker:
     def __init__(self, engine: DispatchEngine, sim_speed: float = SIM_SPEED, clock=time.time):
@@ -75,6 +84,25 @@ class FlightTracker:
         self._loadout.setdefault(d.drone_id, dict(drone.payload))
         self.flights[d.drone_id] = _Flight(d.drone_id, d.request_id, [tuple(p) for p in d.route],
                                            drone.speed_mps, "EN_ROUTE", dispatch=d)
+
+    def reroute(self, zone: NoFlyZone) -> list[dict]:
+        """A new zone appeared: every drone whose remaining path now crosses a zone flies the new
+        shortest safe path from where it is. HOOK: call after engine.zones_changed().
+        Returns `reroute` messages (only for drones that actually changed course)."""
+        out = []
+        threat = Router([zone])
+        for f in list(self.flights.values()):
+            ahead = f.remaining()
+            if len(ahead) < 2 or all(threat.clear(ahead[i], ahead[i + 1]) for i in range(len(ahead) - 1)):
+                continue  # this drone's path doesn't touch the new zone
+            old_m = sum(haversine_m(ahead[i], ahead[i + 1]) for i in range(len(ahead) - 1))
+            new_pts, new_m = self.engine.route_fn(ahead[0], ahead[-1])
+            # TUNE: no range re-check here; the 1.2 safety margin absorbs a detour in the demo.
+            self.flights[f.drone_id] = _Flight(f.drone_id, f.request_id, [tuple(p) for p in new_pts],
+                                               f.speed_mps, f.phase, dispatch=f.dispatch)
+            out.append(reroute_msg(f.drone_id, f.request_id, f.phase, new_pts, new_m,
+                                   new_m / f.speed_mps, new_m - old_m, zone.name))
+        return out
 
     def step(self, dt_real: float) -> list[dict]:
         """Advance every flight by dt_real wall seconds. Returns /ws messages to broadcast, in order."""
