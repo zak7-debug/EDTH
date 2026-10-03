@@ -2,7 +2,7 @@
 
 Two TuringDB graphs, `personnel` and `logistics`. The code version is `backend/app/turing_repo.py`; the Python types are in `backend/app/models.py`.
 
-Ids carry a type prefix: `sol-07`, `med-2`, `unit-1`, `drn-04`, `dep-01`, `nfz-1`, `sup-01`, `dc-01`, `hos-01`.
+Ids carry a type prefix: `sol-07`, `med-2`, `unit-1`, `drn-04`, `dep-01`, `nfz-1`, `sup-01`, `dc-01`, `hos-01`, and `tmp-<id>` for a temporary site deployed in place of a destroyed one.
 
 The logistics graph holds the whole medical supply chain, rear to front: `Supplier` → `DistributionCentre` / `Hospital` → `Depot` → `Drone` → (personnel graph) `Medic` / `Soldier`. Coordinates are WGS84 degrees, distances metres, speeds m/s, timestamps epoch seconds.
 
@@ -35,7 +35,7 @@ Edges:
 - `(Drone)-[:BASED_AT]->(Depot)`
 - `(Drone)-[:CARRIES {qty}]->(SupplyItem)`
 - `(Supplier|DistributionCentre|Hospital|Depot)-[:STOCKS {qty}]->(SupplyItem)`
-- `(Supplier)-[:SUPPLIES {lead_time_min, mode}]->(DistributionCentre|Hospital)`, `(DistributionCentre|Hospital)-[:SUPPLIES {...}]->(Depot)`; `mode` is `TRUCK`/`HELO`/`DRONE`
+- `(Supplier)-[:SUPPLIES {lead_time_min, mode}]->(DistributionCentre|Hospital)`, `(DistributionCentre|Hospital)-[:SUPPLIES {...}]->(Depot)`; `mode` is `TRUCK`/`RAIL`/`HELO`/`DRONE`
 - `(Drone)-[:DISPATCHED_TO {request_id, eta_s, distance_m, ts, latency_ms, status, items_json, route_json, delivered_ts}]->(Recipient)`, or `->(Hospital)` when the drone flies a casualty's kit ahead of them
 - `(Recipient)-[:EVACUATED_TO {evac_id, severity, status (EN_ROUTE/ADMITTED/DIVERTED), ts, eta_s, distance_m, kit_json, shortfall_json, route_json, resupply_request_id, closed_ts}]->(Hospital)`
 

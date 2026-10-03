@@ -55,7 +55,7 @@ def test_deploy_endpoint_diverts_casualties(monkeypatch):
         r = client.post("/sites", json={"facility_id": "hos-01", "status": "DESTROYED"})
         assert any(s["replaces"] == "hos-01" and s["id"] for s in r.json()["suggestions"])
         trip = next(iter(dev_server.world.evac.trips.values()))
-        assert trip.evac.facility_id == "hos-02"  # diverted to the Role 3, hours away
+        assert trip.evac.facility_id == "hos-03"  # diverted to the regional Role 3, well over an hour away
         r = client.post("/sites/deploy", json={"replaces": "hos-01"})
         assert r.status_code == 200 and r.json()["diverted"] == ["sol-10"]
         trip = next(iter(dev_server.world.evac.trips.values()))

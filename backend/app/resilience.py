@@ -58,6 +58,7 @@ SERVES = {"ROLE_1": "WOUNDED", "ROLE_2": "CRITICAL", "ROLE_3": "CRITICAL"}  # wh
 
 FEED_RADIUS_M = 300_000  # feed the temporary site from working sites this close (else the nearest one)
 MIN_GAIN = 0.10  # suggest only if it beats the re-planned network by at least 10%
+HURT_MIN = 0.05  # ... and only if losing the site made evacuation or restock at least 5% slower
 
 
 def temp_id(destroyed_id: str) -> str:
@@ -216,9 +217,11 @@ def suggest(site: Facility, facilities: list[Facility], depots, links: list[Supp
     if best is None:
         return {**base, "id": None, "note": "No safe place found inside the sector for a temporary site."}
     _, temp, new_links, supply, evac = best
-    now_score = (evac_now if evac_now is not None else 24 * 60) * 10 + _total(supply_now) if site.kind == "HOSPITAL" \
-        else _total(supply_now)
-    if best[0] > now_score * (1 - MIN_GAIN):
+    def score(evac, supply):
+        return (evac if evac is not None else 24 * 60) * 10 + _total(supply) if site.kind == "HOSPITAL" else _total(supply)
+    now_score = score(evac_now, supply_now)
+    hurt = now_score > score(evac_before, supply_before) * (1 + HURT_MIN)
+    if not hurt or best[0] > now_score * (1 - MIN_GAIN):
         return {**base, "id": None, "note": f"No temporary site needed: the re-planned network already covers "
                                             f"{site.name}."}
 
@@ -232,7 +235,7 @@ def suggest(site: Facility, facilities: list[Facility], depots, links: list[Supp
     for d in depot_ids:
         if supply[d] is not None and (supply_now[d] is None or supply[d] < supply_now[d] - 1):
             why.append(f"{names[d]} restock: {_hm(supply_now[d])} now, {_hm(supply[d])} with this site")
-    feed = ", ".join(f"{s.name.split(' (')[0]} ({_hm(l.lead_time_min)} by truck)"
+    feed = ", ".join(f"{s.name} ({_hm(l.lead_time_min)} by truck)"
                      for s, l in zip(sources, new_links))
     if site.kind != "HOSPITAL":
         why.append(f"First convoy from {feed} stocks it")
@@ -261,7 +264,7 @@ def suggestions(repo, facilities, depots, links, items) -> list[dict]:
     ids = {f.id for f in facilities}
     personnel, zones = repo.list_personnel(), repo.list_no_fly_zones()
     out = []
-    for site in destroyed:
+    for site in sorted(destroyed, key=lambda f: f.kind != "HOSPITAL"):  # lives first: hospitals at the top
         if temp_id(site.id) in ids:
             continue  # already replaced
         s = suggest(site, facilities, depots, links, personnel, zones, items)

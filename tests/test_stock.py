@@ -70,14 +70,15 @@ def test_destroyed_hub_reroutes_shipment(repo):
     repo.adjust_stock("hos-01", {"blood_oneg": -24})  # and the Role 2 hospital has none
     msgs = keeper.check("dep-02")
     order = keeper.orders["ord-1"]
-    # From the Role 3 hospital by helicopter, through the empty Role 2 hospital and Launch Site Rear.
-    assert order.path == ["hos-02", "hos-01", "dep-03", "dep-02"], msgs
+    # From the regional Role 3 hospital, through the forward distribution point.
+    assert order.path == ["hos-03", "dc-02", "dep-02"], msgs
     clock.t += 1
-    repo.set_facility_status("hos-01", "DESTROYED")
-    out = keeper.site_changed("hos-01", "DESTROYED")
+    repo.set_facility_status("dc-02", "DESTROYED")
+    out = keeper.site_changed("dc-02", "DESTROYED")
     assert [m["data"]["change"]["kind"] for m in out] == ["order_lost", "order_placed"]
     assert order.status == "LOST" and keeper.orders["ord-2"].replaces == "ord-1"
-    assert keeper.orders["ord-2"].path == ["dc-01", "dc-02", "dep-02"]
+    # Re-sent by helicopter from the Dnipro Role 3, through the empty Role 2 hospital and Launch Site Rear.
+    assert keeper.orders["ord-2"].path == ["hos-02", "hos-01", "dep-03", "dep-02"]
     # A site the shipment has already left behind doesn't strand it.
     assert keeper.site_changed("dc-03", "DESTROYED") == []
 

@@ -88,6 +88,6 @@ def test_destroyed_destination_diverts(repo):
     repo.set_facility_status("hos-01", "DESTROYED")
     out = evac.site_changed("hos-01", "DESTROYED")
     assert out[0]["type"] == "evacuation" and out[0]["data"]["diverted_from"] == "hos-01"
-    assert out[0]["data"]["facility_id"] == "hos-02"  # the only other surgical facility
+    assert out[0]["data"]["facility_id"] == "hos-03"  # the nearest other surgical facility (regional Role 3)
     assert facility(repo, "hos-01").beds_used == 0
     assert {e.status for e in repo.list_evacuations()} == {"DIVERTED", "EN_ROUTE"}
