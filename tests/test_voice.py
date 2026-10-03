@@ -192,3 +192,14 @@ def test_transcribe_redoes_other_languages_as_ukrainian(monkeypatch):
     assert voice.transcribe(b"x") == ("Борсук один", "uk") and calls == [None, "uk"]
     calls.clear()
     assert voice.transcribe(b"x", "en")[1] == "en" and calls == ["en"]
+
+
+def test_squad_named_while_another_medic_speaks():
+    ids = _ids()
+    unhurt = sorted(cs for cs in ids if cs.startswith("BADGER") and not cs.endswith("-DOC"))
+    text = "Борсук три, медик. Борсук два, поранений критичний. Сильна кровотеча з ноги. Потрібен турнікет і кров."
+    r = parse_report(text, ids, unhurt=unhurt)
+    assert [(e["type"], e["callsign"]) for e in r.events] == [("CASUALTY", "BADGER 2-1"), ("LOW_STOCK", "BADGER 2-DOC")]
+    assert r.events[1]["items"] == {"tourniquet": 1, "blood_oneg": 1} and r.events[1]["urgency"] == "CRITICAL"
+    assert parse_report("Сокiл два, пілот. Ворожий дрон, вісімсот метрів на північ.", ids,
+                        drones={"FALCON 2": ("drn-04", (47.6, 35.6))}).events[0]["type"] == "NO_FLY_ZONE"
