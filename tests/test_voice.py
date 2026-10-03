@@ -51,12 +51,8 @@ def test_unresolved_parts_are_reported_not_dispatched():
 
 def test_voice_endpoint_dispatches(monkeypatch):
     monkeypatch.setenv("EDTH_REPO", "memory")
-    from backend.app import dev_server, voice
+    from backend.app import dev_server
     dev_server.world = dev_server.World()
-    if not any(getattr(r, "path", "") == "/voice" for r in dev_server.app.routes):
-        dev_server.app.include_router(voice.router)  # HOOK: Sasank adds this line to dev_server.py,
-        routes = dev_server.app.router.routes        # above the static mount at "/" (which must stay last)
-        routes.sort(key=lambda r: getattr(r, "name", "") == "frontend")
     with TestClient(dev_server.app) as client:
         with client.websocket_connect("/ws") as ws:
             for _ in range(4):  # snapshot, queue, supply_chain, stock_update

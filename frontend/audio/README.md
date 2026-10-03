@@ -15,7 +15,7 @@ All lines are invented: they use the seed's fictional callsigns (BADGER 1 to 3).
 ## Try it
 
     git checkout claude/voice-reports-vjfqv0
-    EDTH_APP=backend.app.voice_server:app ./start.sh        # add EDTH_REPO=memory to skip TuringDB
+    ./start.sh        # add EDTH_REPO=memory to skip TuringDB
 
 Open the dashboard at http://localhost:8000 and the test page at http://localhost:8000/audio/radio.html.
 Clip buttons and typed text work straight away. For real speech to text (clips with audio, or the

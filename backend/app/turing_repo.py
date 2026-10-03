@@ -352,6 +352,17 @@ class TuringRepo:
     def set_facility_status(self, facility_id, status):
         self._write(self.g_logistics, [f"MATCH (f) WHERE f.id = {lit(facility_id)} SET f.status = {lit(status)}"])
 
+    def add_facility(self, facility, links):
+        fprops = {'id': facility.id, 'kind': facility.kind, 'name': facility.name, 'lat': facility.lat,
+                  'lon': facility.lon, 'role': facility.role, 'beds': facility.beds, 'beds_used': facility.beds_used,
+                  'status': facility.status}
+        qs = [f"CREATE (f:{FACILITY_LABELS[facility.kind]} {props(fprops)})"]  # committed before the MATCHes below
+        qs += self._stock_queries(facility.id, facility.stock, {})
+        qs += [f"MATCH (a), (b) WHERE a.id = {lit(link.src_id)} AND b.id = {lit(link.dst_id)} "
+               f"CREATE (a)-[:SUPPLIES {props({'lead_time_min': link.lead_time_min, 'mode': link.mode})}]->(b)"
+               for link in links]
+        self._write(self.g_logistics, qs)
+
     def list_facilities(self):
         stock = self._stock_by_node()
         out = []

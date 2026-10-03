@@ -44,6 +44,9 @@ class GraphRepo(Protocol):
     def set_facility_status(self, facility_id: str, status: str) -> None:
         """OPERATIONAL or DESTROYED. A destroyed site drops out of every supply path."""
         ...
+    def add_facility(self, facility: Facility, links: list[SupplyLink]) -> None:
+        """A new (temporary) site and the SUPPLIES links into and out of it. HOOK: resilience.deploy."""
+        ...
     def adjust_stock(self, node_id: str, delta: dict[str, int]) -> dict[str, int]:
         """Add (or, with negative numbers, take) stock at a launch site or facility. Never goes
         below zero. Returns the node's new stock for the items touched. HOOK: stock.py, evac.py."""
@@ -153,6 +156,10 @@ class InMemoryRepo:
 
     def set_facility_status(self, facility_id, status):
         self.facilities[facility_id].status = status
+
+    def add_facility(self, facility, links):
+        self.facilities[facility.id] = facility
+        self.supply_links += list(links)
 
     def adjust_stock(self, node_id, delta):
         node = self.depots.get(node_id) or self.facilities[node_id]

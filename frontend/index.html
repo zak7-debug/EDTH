@@ -133,6 +133,14 @@
   .amb .eta { background: #f778ba; color: #000; text-shadow: none; padding: 1px 6px; border-radius: 6px; font: 700 14px ui-monospace, monospace; }
   .hosp { width: 20px; height: 20px; background: #f778ba; border: 2px solid #fff; border-radius: 4px; color: #fff; font: 900 15px/16px system-ui; text-align: center; }
   .hosp.down { background: #555; }
+  .hosp.temp { background: #f0b429; color: #000; }
+  /* Suggested temporary sites (supply_chain.suggestions, resilience.py) */
+  .sugg { width: 22px; height: 22px; border: 3px dashed #f0b429; border-radius: 50%; background: #f0b42933; color: #f0b429;
+    font: 900 15px/16px system-ui; text-align: center; animation: zonepulse 1.2s ease-in-out infinite; }
+  #suggest .s { margin-top: 8px; padding: 8px; border: 1px dashed #f0b429; border-radius: 6px; font-size: 14px; }
+  #suggest .s b { color: #f0b429; } #suggest .s ul { margin: 4px 0 6px 18px; padding: 0; color: var(--muted); }
+  #suggest .note { margin-top: 6px; color: var(--muted); font-size: 14px; }
+  .deploy { background: #f0b429 !important; color: #000 !important; font-weight: 700; }
   #map.offline { background-color: #0b0f14; }
   .offline-note { position: absolute; top: 14px; right: 60px; z-index: 900; background: #161b22e6; border: 1px solid var(--line);
     border-radius: 8px; padding: 4px 10px; font-size: 13px; color: var(--muted); display: none; }
@@ -176,6 +184,7 @@
     <section>
       <h2>Resupply routes to launch sites</h2>
       <div id="chain"><div class="empty">Waiting for the supply chain</div></div>
+      <div id="suggest"></div>
       <div class="row" style="margin-top:8px"><select id="siteSel"></select><button class="crit" id="siteBtn">Destroy</button></div>
       <div class="row"><button id="chainBtn">Show supply chain on map</button></div>
     </section>
@@ -208,7 +217,9 @@ const latencies = [];
 let chainRoutes = null, siteStatus = {};
 let stockState = null;      // last stock_update: launch-site stock, facility beds, shipments on the way
 const evacs = {};           // evac_id -> {marker, line, person_id, eta, at}
-const chainActive = L.layerGroup();  // active restock routes + destroyed-site markers, redrawn on each supply_chain
+const chainActive = L.layerGroup();
+const suggestLayer = L.layerGroup();  // suggested temporary sites, redrawn on each supply_chain
+let suggestions = [];  // active restock routes + destroyed-site markers, redrawn on each supply_chain
 let mode = 'connecting';
 
 // ---------------------------------------------------------------------------------------------
@@ -254,6 +265,7 @@ L.control.layers(null, { 'Threat zones': layers.zones, 'Launch sites': layers.de
   'Personnel': layers.personnel, 'Drones': layers.drones, 'Hospitals and aid stations': layers.hospitals,
   'Evacuations': layers.evac, 'Supply chain (rear)': layers.chain },
   { collapsed: true, position: 'topleft' }).addTo(map);
+suggestLayer.addTo(map);
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const clock = d => d.toLocaleTimeString([], { hour12: false });
@@ -359,7 +371,8 @@ const hospMarkers = {};
 function drawHospital(f) {
   const role = (f.role || '').replace('ROLE_', 'Role ');
   const down = f.status === 'DESTROYED';
-  const icon = L.divIcon({ className: '', html: `<div class="hosp ${down ? 'down' : ''}">${down ? '✕' : '+'}</div>`, iconSize: [20, 20], iconAnchor: [10, 10] });
+  const temp = f.id.startsWith('tmp-') ? 'temp' : '';
+  const icon = L.divIcon({ className: '', html: `<div class="hosp ${down ? 'down' : ''} ${temp}">${down ? '✕' : '+'}</div>`, iconSize: [20, 20], iconAnchor: [10, 10] });
   let m = hospMarkers[f.id];
   if (!m || !layers.hospitals.hasLayer(m)) {
     m = hospMarkers[f.id] = L.marker([f.lat, f.lon], { icon, zIndexOffset: 400 }).addTo(layers.hospitals);
@@ -508,13 +521,33 @@ const handlers = {
     if (keep) sel.value = keep;
     updateSiteBtn();
     drawChainRoutes();
-    if (c.changed) {
+    renderSuggestions(c.suggestions || []);
+    if (c.changed && c.changed.status !== 'DEPLOYED') {
       const f = nm(c.changed.facility_id), hit = c.changed.status === 'DESTROYED';
       const lines = c.routes.filter(r => prev && prev[r.depot_id] && prev[r.depot_id].minutes !== r.minutes)
         .map(r => r.path ? `${esc(nm(r.depot_id))} now ${hm(r.minutes)} via ${esc(nm(r.source_id))}` : `${esc(nm(r.depot_id))} cut off`);
       log(`<b>${esc(f)}</b> ${hit ? 'destroyed' : 'back in service'}. ${lines.join('; ') || 'No launch site affected'}.`, hit ? 'nod' : 'deliv', c.changed.ms);
+      const sg = (c.suggestions || []).find(x => x.replaces === c.changed.facility_id && x.id);
+      if (sg) lines.push(`Suggested: ${esc(sg.name)}, ${esc(sg.where)}`);
       if (hit) showAlert(`<b>${esc(f)} destroyed.</b> Supply chain re-planned in ${c.changed.ms.toFixed(1)} ms.<div class="alt">${lines.join('<br>') || 'No launch site affected'}</div>`);
     }
+  },
+  // HOOK: site_deployed. A temporary site replaced a destroyed one; a supply_chain update follows.
+  site_deployed(x) {
+    const f = x.facility;
+    S.facilities[f.id] = f;
+    if (f.kind === 'HOSPITAL') drawHospital(f);
+    L.circleMarker([f.lat, f.lon], { radius: 7, color: '#fff', weight: 1, fillColor: '#f0b429', fillOpacity: 1 })
+      .bindTooltip(f.name, { direction: 'top', className: 'lbl' }).addTo(f.kind === 'HOSPITAL' ? layers.chain : layers.depots);
+    const pos = id => S.facilities[id] || S.depots[id];
+    for (const l of x.links) {
+      const a = pos(l.src_id), b = pos(l.dst_id);
+      if (a && b) L.polyline([[a.lat, a.lon], [b.lat, b.lon]], { color: '#f0b429', weight: 2, opacity: .7, dashArray: '2 6' })
+        .bindTooltip(`${l.mode} · ${Math.round(l.lead_time_min)} min`, { className: 'lbl' }).addTo(layers.chain);
+    }
+    const lost = (S.facilities[x.replaces] || { name: x.replaces }).name;
+    log(`<b>${esc(f.name)}</b> set up in place of ${esc(lost)}. Supply chain and evacuations re-planned.`, 'deliv', x.ms);
+    showAlert(`<b>${esc(f.name)} deployed</b> in place of ${esc(lost)}.<div class="alt">Supply chain and evacuations re-planned in ${x.ms.toFixed(1)} ms.</div>`);
   },
   // HOOK: stock_update. Launch-site and hospital stock as the graph holds it now, plus shipments.
   stock_update(x) {
@@ -531,8 +564,10 @@ const handlers = {
   evacuation(e) {
     if (!e.evac_id) { log(`${esc(e.note || 'No evacuation')}: ${esc(e.reason)}`, 'nod'); return; }
     drawEvac(e);
-    if (e.note) log(esc(e.note), e.diverted_from ? 'nod' : 'evac');
-    if (e.diverted_from) showAlert(`<b>${esc(e.note)}</b>`);
+    // Diverted because the destination was destroyed (bad news), or because a closer site opened (good news).
+    const lostDest = e.diverted_from && siteStatus[e.diverted_from] === 'DESTROYED';
+    if (e.note) log(esc(e.note), lostDest ? 'nod' : e.diverted_from ? 'deliv' : 'evac');
+    if (lostDest) showAlert(`<b>${esc(e.note)}</b>`);
   },
   evac_update(u) {
     const ev = evacs[u.evac_id]; if (!ev) return;
@@ -572,6 +607,35 @@ function drawChainRoutes() {
       .bindTooltip(`${f.name} (destroyed)`, { className: 'lbl' }).addTo(chainActive);
   }
 }
+// Suggested temporary sites: a pulsing dashed marker on the map, and a card with the reasons and a Deploy button.
+const hm2 = m => m == null ? 'cut off' : m >= 60 ? `${Math.floor(m / 60)} h ${String(Math.round(m % 60)).padStart(2, '0')}` : `${Math.round(m)} min`;
+function renderSuggestions(list) {
+  suggestions = list;
+  suggestLayer.clearLayers();
+  const box = document.getElementById('suggest');
+  box.innerHTML = list.map(s => s.id
+    ? `<div class="s"><b>Suggested: ${esc(s.name)}</b><br>${esc(s.where)}, replacing ${esc(s.replaces_name)}
+       <ul>${s.why.map(w => `<li>${esc(w)}</li>`).join('')}</ul>
+       <button class="deploy" onclick="deploySite('${esc(s.replaces)}')">Deploy</button> <span class="via">found in ${s.ms} ms</span></div>`
+    : `<div class="note">${esc(s.note)}</div>`).join('');
+  const pos = id => S.facilities[id] || S.depots[id];
+  for (const s of list) if (s.id) {
+    L.marker([s.lat, s.lon], { zIndexOffset: 500, icon: L.divIcon({ className: '', html: '<div class="sugg">+</div>', iconSize: [22, 22], iconAnchor: [11, 11] }) })
+      .bindTooltip(`Suggested: ${s.name.replace(/ \(.*\)/, '')}`, { permanent: true, direction: 'top', offset: [0, -12], className: 'lbl' })
+      .bindPopup(`<b>${esc(s.name)}</b><br>${esc(s.where)}<ul style="margin:4px 0 6px 18px;padding:0">${s.why.map(w => `<li>${esc(w)}</li>`).join('')}</ul>
+        <button class="deploy" onclick="deploySite('${esc(s.replaces)}')">Deploy</button>`).addTo(suggestLayer);
+    for (const l of s.links) {
+      const a = l.src_id === s.id ? s : pos(l.src_id), b = l.dst_id === s.id ? s : pos(l.dst_id);
+      if (a && b) L.polyline([[a.lat, a.lon], [b.lat, b.lon]], { color: '#f0b429', weight: 2, opacity: .8, dashArray: '6 6', interactive: false }).addTo(suggestLayer);
+    }
+  }
+}
+async function deploySite(replaces) {
+  const r = await fetch(API + '/sites/deploy', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replaces }) });
+  if (!r.ok) log(esc((await r.json()).detail || 'Deploy failed'), 'nod');
+  map.closePopup();
+}
+
 function updateSiteBtn() {
   const id = document.getElementById('siteSel').value, b = document.getElementById('siteBtn');
   b.textContent = siteStatus[id] === 'DESTROYED' ? 'Restore' : 'Destroy';

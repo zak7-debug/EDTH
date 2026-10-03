@@ -11,7 +11,7 @@ from .models import Dispatch, Event, NoDispatch
 from .repo import GraphRepo
 
 WS_TYPES = ("snapshot", "event", "dispatch", "no_dispatch", "drone_update", "delivered", "queue", "query_log", "zone_added", "reroute", "drone_lost", "supply_chain",
-            "stock_update", "evacuation", "evac_update", "admitted", "voice_report")
+            "stock_update", "evacuation", "evac_update", "admitted", "voice_report", "site_deployed")
 
 
 def msg(type_: str, data: dict) -> dict:
@@ -139,3 +139,10 @@ def voice_report_msg(report_id: str, transcript: str, language: Optional[str], e
     return msg("voice_report", {"report_id": report_id, "transcript": transcript, "language": language,
                                 "english": english, "events": events, "unparsed": unparsed,
                                 "stt": stt, "stt_ms": stt_ms, "parse_ms": parse_ms})
+
+
+def site_deployed_msg(facility, links, replaces: str, ms: float) -> dict:
+    """A temporary site was set up in place of a destroyed one (resilience.py). The map adds it; an
+    updated `supply_chain` (changed.status = "DEPLOYED") and any diverted `evacuation`s follow."""
+    return msg("site_deployed", {"facility": facility.to_dict(), "links": [l.to_dict() for l in links],
+                                 "replaces": replaces, "ms": ms})

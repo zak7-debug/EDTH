@@ -36,7 +36,7 @@ from fastapi.staticfiles import StaticFiles
 from .dispatch import DispatchEngine
 from .evac import EvacTracker
 from .flights import FlightTracker
-from . import querylog
+from . import querylog, resilience, voice
 from .messages import (dispatch_msg, event_msg, no_dispatch_msg, query_log_msg, queue_msg, snapshot,
                        drone_lost_msg, supply_chain_msg, zone_added_msg)
 from .models import Dispatch, Event, NoFlyZone
@@ -68,6 +68,9 @@ DEMO_SCRIPT = [
     (22.0, {"type": "CASUALTY", "subject_id": "sol-05", "severity": "CRITICAL"}),
     (23.0, {"type": "CASUALTY", "subject_id": "sol-12", "severity": "WOUNDED"}),
     (27.0, {"type": "SITE", "facility_id": "dc-02", "status": "DESTROYED"}),  # DEMO: forward hub hit
+    # DEMO: the Role 2 hospital is hit with CRITICAL casualties on the way: they divert to the Role 3 hours
+    # away, and a forward surgical team is suggested. Press Deploy on the map to set it up (resilience.py).
+    (32.0, {"type": "SITE", "facility_id": "hos-01", "status": "DESTROYED"}),
 ]
 
 
@@ -359,4 +362,8 @@ def index():
 
 
 # Anything else under frontend/ (mock/snapshot.json, assets). Mounted last so the API routes win.
+# Extra endpoints from their own modules: temporary sites (resilience.py) and medic voice reports (voice.py).
+# They must be included before the static mount below, which catches every other path.
+app.include_router(resilience.router)
+app.include_router(voice.router)
 app.mount("/", StaticFiles(directory=FRONTEND), name="frontend")
