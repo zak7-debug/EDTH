@@ -1,12 +1,12 @@
 # EDTH Weekend Plan
 
-Team of four (Person A = Zak, B to D to be named). Live version: https://claude.ai/code/artifact/f11d418a-7639-4e09-adc4-a8d404a98756
+Team: A is Zak, B is Ollie, C is Sasank, D is Arnav. Live version: https://claude.ai/code/artifact/f11d418a-7639-4e09-adc4-a8d404a98756
 
 ## Goal and assumptions
 
 By 22:00 tonight the full demo scenario runs end to end on TuringDB; Sunday morning is only polish, rehearsal and the pitch, with the demo at 13:00.
 
-- **Team:** four people, named Person A to D until we swap in real names. Person A is Zak.
+- **Team:** four people. Letters A to D are used throughout: A is Zak, B is Ollie, C is Sasank, D is Arnav.
 - **Times** are local, assuming we start at 10:00 Saturday. If we start later, shift every Saturday slot by the same amount but keep the 22:00 freeze.
 - **Must work in the demo:** event in, dispatch under a second, live ETA countdown, one reroute around a no-fly zone, a second simultaneous emergency taking a different drone, a visible latency counter, and a clear "no drone available" reason.
 - **Rule for everyone:** merge small working increments to `main` at least every 90 minutes; nobody holds a branch overnight.
@@ -18,9 +18,9 @@ Each person owns one layer end to end, so the four streams only meet at the cont
 | Person | Owns today | Owns Sunday |
 | --- | --- | --- |
 | A (Zak) | Dispatch engine: needs mapping, candidate matching, ETA, selection, drone locking, triage queue. Also owns the contracts and calls each checkpoint. | Pitch narrative and delivering the pitch |
-| B | Data layer: TuringDB install, both graph schemas, seed data, the `GraphRepo` TuringDB implementation, then the waypoint graph and A\* routing around no-fly zones | "What the graph query did" panel content, TuringDB slide |
-| C | Backend: FastAPI app, WebSocket hub, event simulator, drone movement tick loop, arrival and return handling, latency timing, one-command start script, README | Demo replay script so the scenario runs identically every time |
-| D | Frontend: Leaflet map, soldier, medic and drone layers, routes and no-fly zones, ETA countdowns, event log, trigger-emergency panel, latency counter | Visual polish, pitch deck, screen recording as a backup |
+| B (Ollie) | Data layer: TuringDB install, both graph schemas, seed data, the `GraphRepo` TuringDB implementation, then the waypoint graph and A\* routing around no-fly zones | "What the graph query did" panel content, TuringDB slide |
+| C (Sasank) | Backend: FastAPI app, WebSocket hub, event simulator, drone movement tick loop, arrival and return handling, latency timing, one-command start script, README | Demo replay script so the scenario runs identically every time |
+| D (Arnav) | Frontend: Leaflet map, soldier, medic and drone layers, routes and no-fly zones, ETA countdowns, event log, trigger-emergency panel, latency counter | Visual polish, pitch deck, screen recording as a backup |
 
 A also writes the in-memory `GraphRepo` in the first hour, so A, C and D never wait on TuringDB.
 
