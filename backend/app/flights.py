@@ -4,8 +4,9 @@ How it fits the product:
 - The API's tick loop calls `tracker.step(dt)` a few times a second and broadcasts every message
   it returns over /ws. That is what makes drones visibly fly on the map and ETAs count down.
 - Lifecycle of one job: dispatch -> EN_ROUTE along the route -> `delivered` (graph updated via
-  complete_dispatch) -> RETURNING to its home launch site -> reload -> engine.drone_freed(), which
-  serves the triage queue. Any new dispatches from the queue start flying straight away.
+  complete_dispatch) -> RETURNING to its home launch site -> reload from that site's stock
+  (stock.py, so the site's numbers go down) -> engine.drone_freed(), which serves the triage
+  queue. Any new dispatches from the queue start flying straight away.
 - Pure Python, no web framework, so Sasank's main.py and scripts/dev_server.py both use it and it
   can be unit tested without a server.
 
@@ -22,6 +23,7 @@ from .dispatch import DispatchEngine
 from .messages import delivered_msg, dispatch_msg, drone_update_msg, queue_msg, reroute_msg
 from .models import Dispatch, NoFlyZone
 from .routing import Router, haversine_m
+from .stock import StockKeeper, _fmt
 
 Point = tuple[float, float]
 
@@ -70,13 +72,17 @@ class _Flight:
 
 
 class FlightTracker:
-    def __init__(self, engine: DispatchEngine, sim_speed: float = SIM_SPEED, clock=time.time):
+    def __init__(self, engine: DispatchEngine, sim_speed: float = SIM_SPEED, clock=time.time,
+                 stock: Optional[StockKeeper] = None):
         self.engine = engine
         self.repo = engine.repo
         self.sim_speed = sim_speed
         self.clock = clock
+        self.stock = stock or StockKeeper(self.repo, clock=clock)  # HOOK: reloads come out of launch-site stock
         self.flights: dict[str, _Flight] = {}  # drone_id -> flight
-        self._loadout: dict[str, dict[str, int]] = {}  # payload at takeoff, restored on reload
+        # Each drone's standard loadout: its payload the first time it takes off. On landing it is
+        # topped back up to this from its launch site's stock (stock.py), as far as the stock allows.
+        self._loadout: dict[str, dict[str, int]] = {}
 
     def start(self, d: Dispatch) -> None:
         """HOOK: call right after broadcasting a `dispatch` message."""
@@ -125,6 +131,28 @@ class FlightTracker:
             out.append(drone_update_msg(f.drone_id, lat, lon, f.phase, round(eta, 1), f.request_id))
             if f.flown_m >= f.total_m:
                 out += self._arrived(f)
+        for m in self.stock.step():  # restock shipments landing at launch sites
+            out.append(m)
+            change = m["data"]["change"]
+            if change and change["kind"] == "order_arrived":
+                out += self._restocked(change["depot_id"])
+        return out
+
+    def _restocked(self, depot_id: str) -> list[dict]:
+        """A shipment landed: top up drones waiting there short of kit, then serve the queue,
+        since a request may have been waiting on exactly this stock."""
+        out = []
+        for d in self.repo.list_drones():
+            loadout = self._loadout.get(d.id)
+            if d.depot_id == depot_id and d.status == "IDLE" and loadout and not d.carries(loadout):
+                out += self.stock.reload(d, loadout)
+        served = self.engine.drain_queue()
+        for res in served:
+            out.append(dispatch_msg(res))
+            self.engine.record(res)
+            self.start(res)
+        if served:
+            out.append(queue_msg(self.engine.pending()))
         return out
 
     # internals -----------------------------------------------------------------------------------
@@ -142,13 +170,20 @@ class FlightTracker:
             self.repo.update_drone(f.drone_id, status="RETURNING")
             self.flights[f.drone_id] = _Flight(f.drone_id, f.request_id, [tuple(p) for p in back],
                                                f.speed_mps, "RETURNING")
-            return [delivered_msg(f.dispatch, now)] if f.dispatch else []
-        # Back home: battery swap + reload, then serve whoever is waiting.
+            msgs = [delivered_msg(f.dispatch, now)] if f.dispatch else []
+            if f.dispatch and not f.dispatch.recipient_id.startswith(("sol-", "med-")):
+                # A casualty's kit flown ahead to a hospital or aid station: its stock just went up.
+                where = next((x.name for x in self.repo.list_facilities() if x.id == f.dispatch.recipient_id),
+                             f.dispatch.recipient_id)
+                msgs.append(self.stock.message("kit_delivered", f"{drone.callsign} delivered {_fmt(f.dispatch.items)} "
+                                               f"to {where}", facility_id=f.dispatch.recipient_id))
+            return msgs
+        # Back home: battery swap, reload from the launch site's stock, then serve whoever is waiting.
         del self.flights[f.drone_id]
-        # TUNE: instant reload. Real turnaround is RELOAD_S in dispatch.py (used for ETA estimates).
-        self.repo.update_drone(f.drone_id, range_m=drone.max_range_m,
-                               payload=self._loadout.pop(f.drone_id, drone.payload))
+        # TUNE: instant turnaround. Real turnaround is RELOAD_S in dispatch.py (used for ETA estimates).
+        self.repo.update_drone(f.drone_id, range_m=drone.max_range_m)
         msgs = [drone_update_msg(f.drone_id, lat, lon, "IDLE")]
+        msgs += self.stock.reload(self.repo.get_drone(f.drone_id), self._loadout.get(f.drone_id, drone.payload))
         for res in self.engine.drone_freed(f.drone_id):
             msgs.append(dispatch_msg(res))
             self.engine.record(res)

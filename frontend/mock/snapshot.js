@@ -550,6 +550,7 @@ window.MOCK_SNAPSHOT = {
    },
    "role": "",
    "beds": 0,
+   "beds_used": 0,
    "status": "OPERATIONAL"
   },
   {
@@ -563,6 +564,7 @@ window.MOCK_SNAPSHOT = {
    },
    "role": "",
    "beds": 0,
+   "beds_used": 0,
    "status": "OPERATIONAL"
   },
   {
@@ -580,6 +582,7 @@ window.MOCK_SNAPSHOT = {
    },
    "role": "",
    "beds": 0,
+   "beds_used": 0,
    "status": "OPERATIONAL"
   },
   {
@@ -597,6 +600,7 @@ window.MOCK_SNAPSHOT = {
    },
    "role": "",
    "beds": 0,
+   "beds_used": 0,
    "status": "OPERATIONAL"
   },
   {
@@ -614,6 +618,7 @@ window.MOCK_SNAPSHOT = {
    },
    "role": "",
    "beds": 0,
+   "beds_used": 0,
    "status": "OPERATIONAL"
   },
   {
@@ -629,6 +634,7 @@ window.MOCK_SNAPSHOT = {
    },
    "role": "ROLE_2",
    "beds": 20,
+   "beds_used": 0,
    "status": "OPERATIONAL"
   },
   {
@@ -646,6 +652,23 @@ window.MOCK_SNAPSHOT = {
    },
    "role": "ROLE_3",
    "beds": 150,
+   "beds_used": 0,
+   "status": "OPERATIONAL"
+  },
+  {
+   "id": "aid-01",
+   "kind": "HOSPITAL",
+   "name": "Role 1 aid station (sector)",
+   "lat": 47.668,
+   "lon": 35.555,
+   "stock": {
+    "tourniquet": 4,
+    "hemostatic_gauze": 2,
+    "morphine_autoinjector": 4
+   },
+   "role": "ROLE_1",
+   "beds": 4,
+   "beds_used": 0,
    "status": "OPERATIONAL"
   }
  ],
@@ -735,5 +758,6 @@ window.MOCK_SNAPSHOT = {
    "mode": "DRONE"
   }
  ],
- "dispatches": []
+ "dispatches": [],
+ "evacuations": []
 };

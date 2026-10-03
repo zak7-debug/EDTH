@@ -8,13 +8,16 @@ Schema (also in contracts/schema.md):
   logistics:  (:Drone {id, callsign, depot_id, lat, lon, speed_mps, range_m, max_range_m,
                        capacity, status, claimed_by})          claimed_by '' means unclaimed
               (:Depot {id, name, lat, lon}), (:SupplyItem {id}), (:NoFlyZone {id, name, polygon_json})
-              (:Supplier|:DistributionCentre|:Hospital {id, kind, name, lat, lon, role, beds})
+              (:Supplier|:DistributionCentre|:Hospital {id, kind, name, lat, lon, role, beds, beds_used, status})
               (supplier|dc|hospital|depot)-[:STOCKS {qty}]->(item)
               (supplier)-[:SUPPLIES {lead_time_min, mode}]->(dc|hospital)-[:SUPPLIES]->(depot)
               (:Recipient {id})  stand-in for a person, since edges cannot cross graphs
               (drone)-[:BASED_AT]->(depot), (drone)-[:CARRIES {qty}]->(item)
               (drone)-[:DISPATCHED_TO {request_id, eta_s, distance_m, ts, latency_ms, status,
-                                       items_json, route_json}]->(recipient)
+                                       items_json, route_json}]->(recipient | hospital)
+                     a drone flying a casualty's kit ahead of them points straight at the hospital
+              (recipient)-[:EVACUATED_TO {evac_id, severity, status, ts, eta_s, distance_m,
+                                          kit_json, shortfall_json, route_json}]->(hospital)
 
 TuringDB facts this relies on (verified in scripts/turingdb_smoke.py, see docs/turingdb-notes.md):
 - Every write runs inside a change: CHANGE NEW, queries, COMMIT, CHANGE SUBMIT. A node created
@@ -36,7 +39,7 @@ from typing import Iterable, Optional
 from turingdb import TuringDB
 
 from . import querylog
-from .models import ITEMS, Depot, Dispatch, Drone, Facility, NoFlyZone, Person, SupplyLink, Unit
+from .models import ITEMS, Depot, Dispatch, Drone, Evacuation, Facility, NoFlyZone, Person, SupplyLink, Unit
 from .seed import SeedData
 
 # Graph names. TURINGDB_GRAPH_PREFIX (env) prepends a prefix, e.g. tests use 'test_'.
@@ -68,8 +71,8 @@ def lit(v) -> str:
 # Double), so numeric fields are always written with the same Python type.
 # TuringDB fixes a property's type on first write, so floats must always be written as floats.
 FLOAT_FIELDS = {"lat", "lon", "speed_mps", "range_m", "max_range_m", "last_update", "lost_ts",
-                "eta_s", "distance_m", "ts", "latency_ms", "delivered_ts", "lead_time_min"}
-INT_FIELDS = {"capacity", "qty", "beds"}
+                "eta_s", "distance_m", "ts", "latency_ms", "delivered_ts", "lead_time_min", "closed_ts"}
+INT_FIELDS = {"capacity", "qty", "beds", "beds_used"}
 FACILITY_LABELS = {"SUPPLIER": "Supplier", "DISTRIBUTION_CENTRE": "DistributionCentre", "HOSPITAL": "Hospital"}
 
 
@@ -189,7 +192,7 @@ class TuringRepo:
                 parts += self._stocks_parts(dep.id, dep.stock)
             for f in seed.facilities:
                 fprops = {'id': f.id, 'kind': f.kind, 'name': f.name, 'lat': f.lat, 'lon': f.lon,
-                          'role': f.role, 'beds': f.beds, 'status': f.status}
+                          'role': f.role, 'beds': f.beds, 'beds_used': f.beds_used, 'status': f.status}
                 parts.append(f"({var(f.id)}:{FACILITY_LABELS[f.kind]} {props(fprops)})")
                 parts += self._stocks_parts(f.id, f.stock)
             for link in seed.supply_links:
@@ -207,6 +210,33 @@ class TuringRepo:
     @staticmethod
     def _stocks_parts(node_id: str, stock: dict[str, int]) -> list[str]:
         return [f"({var(node_id)})-[:STOCKS {{qty: {int(q)}}}]->({var('item-' + i)})" for i, q in stock.items()]
+
+    @staticmethod
+    def _stock_queries(node_id: str, stock: dict[str, int], existing: dict[str, int]) -> list[str]:
+        """SET the STOCKS edges that exist, CREATE the ones that don't (same idea as _payload_queries)."""
+        qs = []
+        for item, qty in stock.items():
+            if item in existing:
+                qs.append(f"MATCH (n)-[k:STOCKS]->(s:SupplyItem) WHERE n.id = {lit(node_id)} "
+                          f"AND s.id = {lit(item)} SET k.qty = {int(qty)}")
+            else:
+                qs.append(f"MATCH (n), (s:SupplyItem) WHERE n.id = {lit(node_id)} "
+                          f"AND s.id = {lit(item)} CREATE (n)-[:STOCKS {{qty: {int(qty)}}}]->(s)")
+        return qs
+
+    def _node_stock(self, node_id: str) -> dict[str, int]:
+        df = self._read(self.g_logistics, "MATCH (n)-[k:STOCKS]->(s:SupplyItem) "
+                                          f"WHERE n.id = {lit(node_id)} RETURN s.id, k.qty")
+        return {item: int(qty) for item, qty in df.itertuples(index=False, name=None)}
+
+    # HOOK: every stock movement at a launch site or facility (drone reloads, restock orders
+    # leaving and arriving, kit flown to a hospital, a patient treated) is one read + one change.
+    def adjust_stock(self, node_id, delta):
+        with self._lock:  # read-modify-write: must not interleave with another adjustment
+            current = self._node_stock(node_id)
+            new = {i: max(0, current.get(i, 0) + int(q)) for i, q in delta.items()}
+            self._write(self.g_logistics, self._stock_queries(node_id, new, current))
+            return new
 
     def _stock_by_node(self) -> dict[str, dict[str, int]]:
         df = self._read(self.g_logistics, "MATCH (n)-[k:STOCKS]->(s:SupplyItem) RETURN n.id, s.id, k.qty")
@@ -314,9 +344,10 @@ class TuringRepo:
 
     def _facility(self, r: dict, stock: dict[str, int]) -> Facility:
         return Facility(r["id"], r["kind"], r["name"], float(r["lat"]), float(r["lon"]), stock,
-                        role=r["role"] or "", beds=int(r["beds"] or 0), status=r["status"] if isinstance(r["status"], str) and r["status"] else "OPERATIONAL")
+                        role=r["role"] or "", beds=int(r["beds"] or 0), beds_used=int(r.get("beds_used") or 0),
+                        status=r["status"] if isinstance(r["status"], str) and r["status"] else "OPERATIONAL")
 
-    _FACILITY_RETURN = "f.id, f.kind, f.name, f.lat, f.lon, f.role, f.beds, f.status"
+    _FACILITY_RETURN = "f.id, f.kind, f.name, f.lat, f.lon, f.role, f.beds, f.beds_used, f.status"
 
     def set_facility_status(self, facility_id, status):
         self._write(self.g_logistics, [f"MATCH (f) WHERE f.id = {lit(facility_id)} SET f.status = {lit(status)}"])
@@ -341,7 +372,7 @@ class TuringRepo:
                         f"WHERE d.id = {lit(depot_id)} "
                         f"RETURN {self._FACILITY_RETURN}, l.lead_time_min, l.mode, s.id, k.qty")
         found: dict[str, tuple[Facility, SupplyLink]] = {}
-        keys = ("id", "kind", "name", "lat", "lon", "role", "beds", "status")
+        keys = ("id", "kind", "name", "lat", "lon", "role", "beds", "beds_used", "status")
         for (*fvals, lead, mode, item, qty) in df.itertuples(index=False, name=None):
             r = dict(zip(keys, fvals))
             if not isinstance(r["kind"], str) or not r["kind"]:
@@ -409,7 +440,7 @@ class TuringRepo:
             qs = [f"MATCH (d:Drone) WHERE d.id = {lit(drone_id)} SET d.status = 'LOST', d.claimed_by = ''",
                   *self._payload_queries(drone_id, {k: 0 for k in drone.payload}, drone.payload)]
             if request_id:
-                qs.append(f"MATCH (d:Drone)-[x:DISPATCHED_TO]->(r:Recipient) WHERE x.request_id = {lit(request_id)} "
+                qs.append(f"MATCH (d:Drone)-[x:DISPATCHED_TO]->(r) WHERE x.request_id = {lit(request_id)} "
                           f"SET {sets('x', {'status': 'LOST', 'lost_ts': ts or time.time()})}")
             self._write(self.g_logistics, qs)
 
@@ -422,15 +453,18 @@ class TuringRepo:
             "items_json": json.dumps(dispatch.items), "route_json": json.dumps(dispatch.route),
         }
         rid = lit(dispatch.recipient_id)
-        self._write(self.g_logistics, [
-            f"MERGE (r:Recipient {{id: {rid}}})",
-            f"MATCH (d:Drone), (r:Recipient) WHERE d.id = {lit(dispatch.drone_id)} AND r.id = {rid} "
-            f"CREATE (d)-[:DISPATCHED_TO {props(edge)}]->(r)",
-        ])
+        if _is_person(dispatch.recipient_id):
+            qs = [f"MERGE (r:Recipient {{id: {rid}}})",
+                  f"MATCH (d:Drone), (r:Recipient) WHERE d.id = {lit(dispatch.drone_id)} AND r.id = {rid} "
+                  f"CREATE (d)-[:DISPATCHED_TO {props(edge)}]->(r)"]
+        else:  # a hospital or aid station lives in this graph already: point straight at it
+            qs = [f"MATCH (d:Drone), (r) WHERE d.id = {lit(dispatch.drone_id)} AND r.id = {rid} "
+                  f"CREATE (d)-[:DISPATCHED_TO {props(edge)}]->(r)"]
+        self._write(self.g_logistics, qs)
 
     def _query_dispatches(self, where: str = "") -> list[Dispatch]:
         df = self._read(self.g_logistics,
-                        f"MATCH (d:Drone)-[x:DISPATCHED_TO]->(r:Recipient) {where} "
+                        f"MATCH (d:Drone)-[x:DISPATCHED_TO]->(r) {where} "
                         "RETURN d.id, r.id, x.request_id, x.eta_s, x.distance_m, x.ts, x.latency_ms, "
                         "x.status, x.items_json, x.route_json")
         out = []
@@ -454,12 +488,67 @@ class TuringRepo:
             drone = self.get_drone(disp.drone_id)
             new_payload = {i: max(0, drone.payload.get(i, 0) - q) for i, q in disp.items.items()}
             self._write(self.g_logistics, [
-                f"MATCH (d:Drone)-[x:DISPATCHED_TO]->(r:Recipient) WHERE x.request_id = {lit(request_id)} "
+                f"MATCH (d:Drone)-[x:DISPATCHED_TO]->(r) WHERE x.request_id = {lit(request_id)} "
                 f"SET {sets('x', {'status': 'DELIVERED', 'delivered_ts': ts or time.time()})}",
                 *self._payload_queries(disp.drone_id, new_payload, drone.payload),
             ])
-            person = self.get_person(disp.recipient_id)
-            if person is not None and person.kind == "MEDIC":
-                self.update_person(person.id, stock={i: person.stock.get(i, 0) + q for i, q in disp.items.items()})
+            if not _is_person(disp.recipient_id):  # kit flown ahead of a casualty (evac.py)
+                self.adjust_stock(disp.recipient_id, disp.items)
+            else:
+                person = self.get_person(disp.recipient_id)
+                if person is not None and person.kind == "MEDIC":
+                    self.update_person(person.id, stock={i: person.stock.get(i, 0) + q for i, q in disp.items.items()})
             disp.status = "DELIVERED"
             return disp
+
+    # casualty evacuation (evac.py). Same cross-graph trick as dispatches: the casualty is a
+    # Recipient stand-in, the hospital is the real node, and its beds_used counts the bed.
+    def _beds_used(self, facility_id: str) -> int:
+        df = self._read(self.g_logistics, f"MATCH (f) WHERE f.id = {lit(facility_id)} RETURN f.beds_used")
+        return int(df.iloc[0, 0] or 0) if not df.empty and not _isna(df.iloc[0, 0]) else 0
+
+    def start_evacuation(self, evac):
+        edge = {"evac_id": evac.evac_id, "severity": evac.severity, "status": evac.status, "ts": evac.ts,
+                "eta_s": evac.eta_s, "distance_m": evac.distance_m, "kit_json": json.dumps(evac.kit),
+                "shortfall_json": json.dumps(evac.shortfall), "route_json": json.dumps(evac.route),
+                "resupply_request_id": evac.resupply_request_id or ""}
+        pid, fid = lit(evac.person_id), lit(evac.facility_id)
+        with self._lock:
+            used = self._beds_used(evac.facility_id)
+            self._write(self.g_logistics, [
+                f"MERGE (r:Recipient {{id: {pid}}})",
+                f"MATCH (r:Recipient), (f) WHERE r.id = {pid} AND f.id = {fid} "
+                f"CREATE (r)-[:EVACUATED_TO {props(edge)}]->(f)",
+                f"MATCH (f) WHERE f.id = {fid} SET f.beds_used = {used + 1}",
+            ])
+
+    def finish_evacuation(self, evac_id, status="ADMITTED", ts=None):
+        with self._lock:
+            found = self._query_evacuations(f"WHERE x.evac_id = {lit(evac_id)}")
+            if not found:
+                return
+            qs = [f"MATCH (r:Recipient)-[x:EVACUATED_TO]->(f) WHERE x.evac_id = {lit(evac_id)} "
+                  f"SET {sets('x', {'status': status, 'closed_ts': ts or time.time()})}"]
+            if status == "DIVERTED":
+                fid = found[0].facility_id
+                qs.append(f"MATCH (f) WHERE f.id = {lit(fid)} SET f.beds_used = {max(0, self._beds_used(fid) - 1)}")
+            self._write(self.g_logistics, qs)
+
+    def _query_evacuations(self, where: str = "") -> list[Evacuation]:
+        df = self._read(self.g_logistics,
+                        f"MATCH (r:Recipient)-[x:EVACUATED_TO]->(f) {where} "
+                        "RETURN x.evac_id, r.id, f.id, x.severity, x.route_json, x.distance_m, x.eta_s, x.ts, "
+                        "x.kit_json, x.shortfall_json, x.resupply_request_id, x.status")
+        return [Evacuation(evac_id=e, person_id=p, facility_id=f, severity=sev,
+                           route=[tuple(pt) for pt in json.loads(route)], distance_m=float(dist),
+                           eta_s=float(eta), ts=float(ts), kit=json.loads(kit), shortfall=json.loads(short),
+                           resupply_request_id=req or None, status=st)
+                for (e, p, f, sev, route, dist, eta, ts, kit, short, req, st) in df.itertuples(index=False, name=None)]
+
+    def list_evacuations(self):
+        return self._query_evacuations()
+
+
+def _is_person(node_id: str) -> bool:
+    """Soldiers and medics live in the personnel graph; everything else is a logistics node."""
+    return node_id.startswith(("sol-", "med-"))

@@ -244,5 +244,67 @@ Destroy the field hospital as well and Launch Site West is cut off: the panel sh
 
 **To change:** `RESTOCK_ORDER` sets what a chain must deliver. Add or retime `SUPPLY_LINKS` in seed.py, then run `python scripts/export_mock.py`.
 
-**Not modelled yet:** a launch site's own stock doesn't go down when drones reload, and nothing places restock orders automatically.
+Launch-site stock going down on reloads, and automatic restock orders down this chain, are section 16.
 
+
+## 16. Launch-site stock and restock orders (`backend/app/stock.py`)
+
+**What it does:** every launch site's stock is real and kept in the graph (`STOCKS` edges in TuringDB).
+- **Reloads come out of it.** When a drone lands back home, `StockKeeper.reload()` tops it back up to its standard loadout (its payload the first time it took off) from that site's stock. The site goes down by exactly what the drone took. If the site is short, the drone leaves with what there is and the log says what it is missing.
+- **Low sites reorder.** After every change, a site holding fewer than `REORDER_POINT` (4) of any item orders enough to get back to `REORDER_UP_TO` (12). The order goes down the fastest working supply chain (`best_path`, section 15). The source's stock is taken when it ships, and the launch site's stock goes up when it lands.
+- **Shipments land after the real lead time,** played at `EDTH_ORDER_SPEED` (default 60x, so one lead-time minute is one real second).
+- **Waiting drones and requests are served on arrival.** When a shipment lands, idle drones at that site that are short of kit are topped up, and the triage queue is served again, because a request may have been waiting on exactly that stock.
+- **Lost shipments are re-sent.** If a hub or hospital the shipment still has to pass through is destroyed, the shipment is written off and a new order goes out on the next-best chain straight away.
+
+**What you see:** the **Launch-site stock** panel shows each site's stock, with items below the reorder point in red and changed cells flashing. Shipments on the way are listed under the table, with the lead-time minutes left. Every reload, order placed, order landed and order lost is in the event log. Launch Site West starts with 1 unit of blood, so on startup it orders 11 from the Role 2 field hospital (35 min via a cargo-drone relay from Launch Site Rear), and they land 35 s into the demo.
+
+**Graph cost:** each stock movement is one read and one change on TuringDB (`adjust_stock`, about 10 ms), off the decision path.
+
+**To change:** `REORDER_POINT`, `REORDER_UP_TO` and `ORDER_SPEED` are at the top of stock.py. To keep orders in the graph too, see the `HOOK` there: write each as a `SHIPMENT` edge.
+
+## 17. Casualty evacuation, with kit flown ahead (`backend/app/evac.py`)
+
+**What it does:** every casualty event starts two things at once:
+1. the drone with point-of-injury supplies (section 8), and
+2. an evacuation to the fastest place that can treat them.
+
+**Where they go:**
+- `CRITICAL` needs surgery, so a Role 2 or Role 3 hospital. `WOUNDED` can also go to a Role 1 aid station (`ACCEPTS`).
+- Only operational facilities with a free bed count. Each one gets a ground route round the threat zones (the same router the drones use) at `CASEVAC_SPEED_MPS` (about 40 km/h), plus `LOAD_S` (5 min) to treat and load first. The earliest arrival wins.
+- The bed is taken from that moment (`beds_used`), so two casualties are never promised the last bed.
+
+**Supplies ahead of the casualty:**
+- The destination's stock, minus kit already promised to casualties on their way there, is checked against what this casualty needs (`TREATMENT_KIT`).
+- Anything missing goes out at once as a drone request to the facility, through the normal dispatch engine. That way it queues when drones are busy and is retried if the drone is shot down.
+- The seed's Role 1 aid station has no chest seals on purpose. The first `WOUNDED` casualty shows FALCON 3 flying a chest seal there, landing well before the casualty does.
+
+**On arrival:** the kit is used up from the facility's stock, the casualty becomes `ADMITTED` in the graph and moves to the facility on the map. Anything still missing is reported.
+
+**When the world changes:**
+- A new threat on their road makes them detour.
+- If the destination is destroyed, they are diverted from where they are to the next-fastest facility, and the bed is given back.
+
+**In the graph:**
+- `(:Recipient)-[:EVACUATED_TO {evac_id, severity, status, eta_s, kit_json, shortfall_json, route_json}]->(:Hospital)`.
+- `beds_used` lives on the hospital.
+- A kit drone's `DISPATCHED_TO` edge points straight at the hospital node.
+
+**What you see:**
+- Hospitals and the aid station are on the sector map (pink squares, beds in the popup).
+- Each evacuation is a pink dotted route with an ambulance marker and an ETA countdown.
+- The bed count is under the stock table, and the log says where each casualty is going and whether kit is being flown ahead.
+
+**Limits:**
+- Ground routes are straight lines round zones: there is no road network in the graph yet (`HOOK` in evac.py).
+- At 10x, a 37 min evacuation takes about 4 real minutes, so admissions land after the scripted part of the demo.
+
+## 18. Map background (`GET /tiles`, `scripts/fetch_tiles.py`)
+
+**What it does:**
+- The dashboard asks the backend for map tiles at `/tiles/{z}/{x}/{y}.png`.
+- The backend serves them from `frontend/tiles/`. Any tile it doesn't have yet is fetched once from CARTO's dark basemap and kept, so every area you've looked at online works offline afterwards.
+- If a tile still fails, the browser tries CARTO directly. If that fails too, the map shows an offline grid backdrop with a few real towns and a note, instead of going black.
+
+**Before the demo:** run `python scripts/fetch_tiles.py` once on the demo laptop while it is online. It fetches about 1,600 tiles (around 10 MB, a few minutes at 8 tiles a second) for the sector, the Zaporizhzhia–Dnipro area and the whole supply chain view. After that the map needs no internet. `frontend/tiles/` is git-ignored.
+
+**Online preview:** the hosted preview can't load map tiles (its sandbox blocks images from other sites), so it shows the offline backdrop. The real dashboard on a laptop shows the full map.

@@ -18,7 +18,8 @@ from typing import Literal, Optional
 ITEMS = ("tourniquet", "blood_oneg", "chest_seal", "hemostatic_gauze", "morphine_autoinjector")
 
 PersonKind = Literal["SOLDIER", "MEDIC"]
-PersonStatus = Literal["OK", "WOUNDED", "CRITICAL"]
+# ADMITTED: arrived at a hospital or aid station (evac.py). On the way they keep their severity.
+PersonStatus = Literal["OK", "WOUNDED", "CRITICAL", "ADMITTED"]
 DroneStatus = Literal["IDLE", "EN_ROUTE", "RETURNING", "CHARGING", "LOST"]
 EventType = Literal["CASUALTY", "LOW_STOCK"]
 Severity = Literal["CRITICAL", "WOUNDED"]
@@ -89,8 +90,9 @@ class Facility:
     lat: float
     lon: float
     stock: dict[str, int] = field(default_factory=dict)
-    role: str = ""  # hospitals only
+    role: str = ""  # hospitals only: ROLE_1 (aid station), ROLE_2, ROLE_3
     beds: int = 0  # hospitals only
+    beds_used: int = 0  # taken by admitted patients and by casualties already on the way (evac.py)
     status: str = "OPERATIONAL"  # or "DESTROYED": the supply chain routes round it (supply_chain.py)
 
     def to_dict(self) -> dict:
@@ -206,3 +208,31 @@ class NoDispatch:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+EvacStatus = Literal["EN_ROUTE", "ADMITTED", "DIVERTED"]
+
+
+@dataclass
+class Evacuation:
+    """One casualty on the way to a hospital or aid station (evac.py).
+
+    `kit` is what the destination will use to treat them; `shortfall` is the part of it the
+    destination didn't have, flown in by drone (`resupply_request_id`) while the casualty travels."""
+    evac_id: str
+    person_id: str
+    facility_id: str
+    severity: str
+    route: list[tuple[float, float]]  # [(lat, lon), ...] from the casualty to the facility
+    distance_m: float
+    eta_s: float  # mission seconds, including the time to treat and load before moving (evac.LOAD_S)
+    ts: float
+    kit: dict[str, int] = field(default_factory=dict)
+    shortfall: dict[str, int] = field(default_factory=dict)
+    resupply_request_id: Optional[str] = None
+    status: EvacStatus = "EN_ROUTE"
+
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        d["route"] = [list(p) for p in self.route]
+        return d

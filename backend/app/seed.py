@@ -12,7 +12,8 @@ Plain Python data so both repos (in-memory and TuringDB) load exactly the same w
 
 The whole medical chain is modelled, rear to front:
   donor hub (PL) -> Lviv hub -> Dnipro hub -> Zaporizhzhia forward point -> 3 drone launch sites
-  -> 8 drones -> 3 medics and 17 soldiers, with a Kyiv blood service and two hospitals alongside.
+  -> 8 drones -> 3 medics and 17 soldiers, with a Kyiv blood service, two hospitals and a Role 1
+  aid station alongside (where casualties are evacuated to, evac.py).
 Upstream levels mostly matter for "no drone can serve this": the answer can then say which
 launch site must reload a drone and where that site gets restocked from.
 
@@ -110,6 +111,11 @@ FACILITIES = [
     Facility("hos-02", "HOSPITAL", "Role 3 hospital (Dnipro region)", 48.4700, 35.0000,
              {"blood_oneg": 80, "tourniquet": 20, "chest_seal": 20, "hemostatic_gauze": 30, "morphine_autoinjector": 20},
              role="ROLE_3", beds=150),
+    # DEMO: a Role 1 aid station just behind the squads, where WOUNDED casualties go first.
+    # Few beds and no chest seals on purpose, so the first WOUNDED evacuation shows a drone flying
+    # the missing kit there while the casualty is still on the road (evac.py).
+    Facility("aid-01", "HOSPITAL", "Role 1 aid station (sector)", 47.6680, 35.5550,
+             {"tourniquet": 4, "hemostatic_gauze": 2, "morphine_autoinjector": 4}, role="ROLE_1", beds=4),
 ]
 
 # Who restocks whom, with transport lead time in minutes.

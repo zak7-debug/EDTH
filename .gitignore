@@ -5,3 +5,4 @@ __pycache__/
 .turing/
 scratch/
 .DS_Store
+frontend/tiles/

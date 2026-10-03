@@ -8,7 +8,12 @@ How it fits the product:
     uvicorn backend.app.dev_server:app --port 8000            (EDTH_REPO=memory for no database)
 - Flow of one request: POST /events -> broadcast `event` -> engine.handle (the timed decision)
   -> broadcast `dispatch` / `no_dispatch` -> engine.record (graph writes, off the latency path)
-  -> FlightTracker flies the drone, ticking `drone_update` -> `delivered` -> return -> queue drains.
+  -> FlightTracker flies the drone, ticking `drone_update` -> `delivered` -> return -> reload
+  from the launch site's stock (stock.py, `stock_update`) -> queue drains.
+- A casualty also starts an evacuation (evac.py): `evacuation` -> `evac_update` ticks -> `admitted`,
+  with a drone flying any missing kit to the destination at the same time.
+- GET /tiles/{z}/{x}/{y}.png serves the map background from a local cache, fetching and saving
+  tiles it doesn't have yet, so the map works offline once scripts/fetch_tiles.py has run.
 
 Searchable tags: TUNE (numbers to adjust), HOOK (integration points), DEMO (demo behaviour).
 """
@@ -17,26 +22,35 @@ from __future__ import annotations
 import asyncio
 import itertools
 import math
+import os
 import time
+import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .dispatch import DispatchEngine
+from .evac import EvacTracker
 from .flights import FlightTracker
 from . import querylog
 from .messages import (dispatch_msg, event_msg, no_dispatch_msg, query_log_msg, queue_msg, snapshot,
                        drone_lost_msg, supply_chain_msg, zone_added_msg)
 from .models import Dispatch, Event, NoFlyZone
 from .repo import get_repo
+from .stock import StockKeeper
 from .supply_chain import chain_status
 
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
 TICK_S = 0.5  # TUNE: how often drones move on the map (contract says about 2 updates per second)
+AUTO_EVACUATE = True  # TUNE: every casualty event also starts an evacuation (evac.py)
+# TUNE: map background. Tiles are cached under frontend/tiles/{z}/{x}/{y}.png; anything missing is
+# fetched once from TILE_UPSTREAM and saved. scripts/fetch_tiles.py fills the cache for offline use.
+TILE_DIR = Path(os.environ.get("EDTH_TILE_DIR", FRONTEND / "tiles"))
+TILE_UPSTREAM = os.environ.get("EDTH_TILE_UPSTREAM", "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png")
 
 # DEMO: the scripted scenario behind the "Run demo scenario" button. (seconds after start, event).
 # Story: a critical casualty, then one that forces a detour round the EW jamming zone, then two
@@ -77,7 +91,10 @@ class World:
     def __init__(self):
         self.repo = get_repo()  # HOOK: EDTH_REPO=turing|memory picks the store
         self.engine = DispatchEngine(self.repo)  # routes round threat zones by default
-        self.tracker = FlightTracker(self.engine)
+        self.stock = StockKeeper(self.repo)  # launch-site stock and restock orders
+        self.tracker = FlightTracker(self.engine, stock=self.stock)
+        self.evac = EvacTracker(self.engine, self.tracker, self.stock)
+        self.stock.check_all()  # DEMO: Launch Site West starts short of blood, so it reorders straight away
 
 
 world = World()
@@ -126,12 +143,13 @@ async def add_threat(body: dict) -> dict:
     t = time.perf_counter()
     world.repo.add_no_fly_zone(zone)  # graph first, so every later decision sees it
     world.engine.zones_changed()  # new decisions route round it
-    reroutes = world.tracker.reroute(zone)  # drones already flying change course
+    reroutes = world.tracker.reroute(zone) + world.evac.reroute(zone)  # drones and casualties on the move detour
     ms = (time.perf_counter() - t) * 1000
     await broadcast(zone_added_msg(zone))
     for m in reroutes:
         await broadcast(m)
-    return {"zone": zone.to_dict(), "rerouted": [m["data"]["drone_id"] for m in reroutes], "ms": round(ms, 1)}
+    return {"zone": zone.to_dict(), "rerouted": [m["data"].get("drone_id") or m["data"].get("person_id")
+                                                 for m in reroutes], "ms": round(ms, 1)}
 
 
 async def lose_drone(drone_id: str) -> dict:
@@ -173,6 +191,9 @@ async def set_site(facility_id: str, status: str) -> dict:
     chain = chain_status(world.repo)
     ms = (time.perf_counter() - t) * 1000
     await broadcast(supply_chain_msg(chain, {"facility_id": facility_id, "status": status, "ms": round(ms, 1)}))
+    # Shipments still to pass through the site are re-sent another way; casualties heading there are diverted.
+    for m in world.stock.site_changed(facility_id, status) + world.evac.site_changed(facility_id, status):
+        await broadcast(m)
     return {**chain, "ms": round(ms, 1)}
 
 
@@ -213,6 +234,11 @@ async def process(raw: dict, received_perf: float) -> dict:
     if isinstance(result, Dispatch):
         world.tracker.start(result)
     await broadcast(queue_msg(world.engine.pending()))
+    if AUTO_EVACUATE and event.type == "CASUALTY" and event.severity:
+        person = world.repo.get_person(event.subject_id)
+        if person is not None and person.kind == "SOLDIER":
+            for m in world.evac.start(person, event.severity):  # evacuation + kit flown ahead
+                await broadcast(m)
     return result.to_dict()
 
 
@@ -241,6 +267,7 @@ async def reset():
     world = World()
     await broadcast(snapshot(world.repo))
     await broadcast(supply_chain_msg(chain_status(world.repo)))
+    await broadcast(world.stock.message())
     return {"ok": True}
 
 
@@ -274,6 +301,7 @@ async def ws(socket: WebSocket):
     await socket.send_json(snapshot(world.repo))
     await socket.send_json(queue_msg(world.engine.pending()))
     await socket.send_json(supply_chain_msg(chain_status(world.repo)))
+    await socket.send_json(world.stock.message())
     try:
         while True:
             await socket.receive_text()  # clients don't send anything; this just waits for close
@@ -287,11 +315,42 @@ async def _tick_loop():
         await asyncio.sleep(TICK_S)
         now = time.monotonic()
         try:
-            for m in world.tracker.step(now - last):
+            w = world  # a reset mid-tick swaps the world; finish this tick on the old one
+            for m in w.tracker.step(now - last) + w.evac.step(now - last):  # flights, shipments, evacuations
                 await broadcast(m)
         except Exception as e:  # never let one bad tick kill the loop mid-demo
             print("tick error:", e)
         last = now
+
+
+_tile_misses: set[str] = set()
+
+
+def _fetch_tile(z: int, x: int, y: int) -> bytes:
+    url = TILE_UPSTREAM.format(s="abcd"[(x + y) % 4], z=z, x=x, y=y)
+    req = urllib.request.Request(url, headers={"User-Agent": "EDTH-hackathon-demo/1.0 (tile cache)"})
+    with urllib.request.urlopen(req, timeout=6) as r:  # TUNE: give up quickly when offline
+        return r.read()
+
+
+@app.get("/tiles/{z}/{x}/{y}.png")
+async def tile(z: int, x: int, y: int):
+    """HOOK: the dashboard's map background. Cached tile if we have it, else fetched once and saved.
+    404 when offline and not cached: the dashboard then shows its offline backdrop instead."""
+    path = TILE_DIR / str(z) / str(x) / f"{y}.png"
+    if not path.exists():
+        key = f"{z}/{x}/{y}"
+        if key in _tile_misses:
+            raise HTTPException(404, "tile not cached and upstream unreachable")
+        try:
+            data = await asyncio.to_thread(_fetch_tile, z, x, y)
+        except Exception:
+            _tile_misses.add(key)  # don't retry the same tile on every pan while offline
+            raise HTTPException(404, "tile not cached and upstream unreachable")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return Response(data, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
 
 
 @app.get("/")

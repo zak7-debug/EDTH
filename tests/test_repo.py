@@ -91,7 +91,7 @@ def test_update_drone(repo):
 def test_supply_chain(repo):
     facilities = {f.id: f for f in repo.list_facilities()}
     assert {f.kind for f in facilities.values()} == {"SUPPLIER", "DISTRIBUTION_CENTRE", "HOSPITAL"}
-    assert len(facilities) == 7
+    assert len(facilities) == 8
     assert facilities["hos-02"].role == "ROLE_3" and facilities["hos-02"].beds == 150
     assert facilities["sup-02"].stock == {"blood_oneg": 400}
     assert len(repo.list_supply_links()) == 14

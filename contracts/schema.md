@@ -26,7 +26,7 @@ Edges: `(Soldier)-[:MEMBER_OF]->(Unit)`, `(Medic)-[:ATTACHED_TO]->(Unit)`.
 | `Depot` | id, name, lat, lon (drone launch site; stock via `STOCKS`) |
 | `Supplier` | id, kind=`SUPPLIER`, name, lat, lon (rear: pharma / blood service) |
 | `DistributionCentre` | id, kind=`DISTRIBUTION_CENTRE`, name, lat, lon |
-| `Hospital` | id, kind=`HOSPITAL`, name, lat, lon, role (`ROLE_2`/`ROLE_3`), beds |
+| `Hospital` | id, kind=`HOSPITAL`, name, lat, lon, role (`ROLE_1` aid station/`ROLE_2`/`ROLE_3`), beds, beds_used, status |
 | `SupplyItem` | id (one node per item in the vocabulary) |
 | `NoFlyZone` | id, name, polygon_json (`[[lat, lon], ...]`) |
 | `Recipient` | id (the person's id; a stand-in because edges cannot cross graphs) |
@@ -36,7 +36,8 @@ Edges:
 - `(Drone)-[:CARRIES {qty}]->(SupplyItem)`
 - `(Supplier|DistributionCentre|Hospital|Depot)-[:STOCKS {qty}]->(SupplyItem)`
 - `(Supplier)-[:SUPPLIES {lead_time_min, mode}]->(DistributionCentre|Hospital)`, `(DistributionCentre|Hospital)-[:SUPPLIES {...}]->(Depot)`; `mode` is `TRUCK`/`HELO`/`DRONE`
-- `(Drone)-[:DISPATCHED_TO {request_id, eta_s, distance_m, ts, latency_ms, status, items_json, route_json, delivered_ts}]->(Recipient)`
+- `(Drone)-[:DISPATCHED_TO {request_id, eta_s, distance_m, ts, latency_ms, status, items_json, route_json, delivered_ts}]->(Recipient)`, or `->(Hospital)` when the drone flies a casualty's kit ahead of them
+- `(Recipient)-[:EVACUATED_TO {evac_id, severity, status (EN_ROUTE/ADMITTED/DIVERTED), ts, eta_s, distance_m, kit_json, shortfall_json, route_json, resupply_request_id, closed_ts}]->(Hospital)`
 
 ## Rules TuringDB imposes
 
