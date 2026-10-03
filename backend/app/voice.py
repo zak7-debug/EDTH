@@ -1,4 +1,12 @@
-"""Medic voice reports: radio audio (Ukrainian or English) -> transcript -> the same events as POST /events.
+"""Voice reports: radio audio (Ukrainian or English) -> transcript -> the same events as POST /events.
+
+Who reports what:
+- Medics (Ukrainian callsign, «Борсук один, медик»): casualties, restocks with an urgency, spoken zones,
+  and «Скільки до прибуття?» (how long until my drone arrives).
+- Drone pilots: «Яструб один збитий» (HAWK 1 shot down) -> DRONE_LOST; a threat seen from the drone
+  («Сокіл два, ворожий дрон, вісімсот метрів на північ») -> a zone placed from the drone's position.
+- Truck drivers: road blocks and threats from their device position (lat / lon).
+Every report gets a short read-back (`readback`: Ukrainian and English) that the dashboard speaks.
 
     POST /voice?clip=<name>   body = raw audio bytes (wav/webm/mp3/ogg). clip names a scripted clip
                               in frontend/audio/, whose .txt transcript is the fallback when speech
@@ -31,6 +39,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from .geo.parse_spatial import KILOMETRES, METRES, parse_spatial
 from .messages import voice_report_msg
+from .models import RESTOCK_PRIORITY
 
 AUDIO_DIR = Path(__file__).resolve().parents[2] / "frontend" / "audio"
 WHISPER_MODEL = os.environ.get("EDTH_WHISPER_MODEL", "small")  # TUNE: "base" if the demo CPU is slow
@@ -46,10 +55,10 @@ NUMBERS = {
     "п'ять": 5, "п'яти": 5, "п'ятий": 5, "п'ятого": 5,
     "шість": 6, "шести": 6, "шостий": 6, "шостого": 6,
     "сім": 7, "семи": 7, "сьомий": 7, "сьомого": 7,
-    "вісім": 8, "восьми": 8,
+    "вісім": 8, "восьми": 8, "дев'ять": 9, "десять": 10,
     # English
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
-    "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
+    "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "nine": 9, "ten": 10,
 }
 CALLSIGN_STEMS = {"борсук": "BADGER", "badger": "BADGER"}  # DEMO: the seed's invented squad names
 MEDIC_STEMS = ("медик", "лікар", "санінструктор", "medic", "doc")
@@ -84,6 +93,21 @@ ZONE_INTENTS = (
 NO_ENTRY = ("не заїжд", "не заход", "do not enter", "no go")  # "не заїжджати": a ground no-go area
 DIST_UNITS = METRES | KILOMETRES
 ENGLISH_ZONES = {"NO_FLY_ZONE": "no-fly zone", "NO_GO_AREA": "no-go area", "ROAD_BLOCKED": "road blocked"}
+
+# Restock urgency (LOW_STOCK `urgency`, models.RESTOCK_PRIORITY). Checked in this order, as phrases on
+# word starts: "не терміново" contains "терміново". A restock in a report with a CRITICAL casualty is CRITICAL.
+URGENCY_STEMS = {
+    "NON_URGENT": ("не терміново", "не срочно", "планов", "звичайн", "коли буде змога", "not urgent",
+                   "routine", "when you can"),
+    "CRITICAL": ("критичн", "важк", "тяжк", "масивн", "негайно", "critical", "immediately"),
+    "URGENT": ("терміново", "швидко", "закінчу", "немає", "нема", "urgent", "asap", "running out", "out of"),
+}
+# DEMO: the seed's invented drone callsigns, as a pilot says them (Ukrainian case forms by stem).
+DRONE_STEMS = {"hawk": "HAWK", "яструб": "HAWK", "falcon": "FALCON", "сокіл": "FALCON", "сокол": "FALCON",
+               "owl": "OWL", "сова": "OWL", "сови": "OWL", "сову": "OWL"}
+DRONE_UK = {"HAWK": "Яструб", "FALCON": "Сокіл", "OWL": "Сова"}
+LOST_STEMS = ("збит", "втрач", "знищ", "впав", "впала", "shot down", "lost", "crashed", "destroyed")
+ETA_STEMS = ("скільки до", "коли прибуд", "коли буде", "де дрон", "де мій", "how long", "when will", "eta")
 
 ENGLISH_ITEMS = {"blood_oneg": "blood (O-neg)", "tourniquet": "tourniquets", "chest_seal": "chest seals",
                  "hemostatic_gauze": "haemostatic gauze", "morphine_autoinjector": "morphine"}
@@ -149,6 +173,26 @@ def _items(toks: list[str]) -> dict[str, int]:
     return items
 
 
+def _has(sentence: str, stems) -> bool:
+    """Stems matched at word starts, so multi-word phrases ("не терміново", "shot down") work too."""
+    s = " " + " ".join(_tokens(sentence)) + " "
+    return any(f" {stem}" in s for stem in stems)
+
+
+def _urgency(sentence: str) -> Optional[str]:
+    return next((u for u, stems in URGENCY_STEMS.items() if _has(sentence, stems)), None)
+
+
+def _drones(toks: list[str]) -> list[str]:
+    """Drone callsigns spoken: "HAWK 1", «Яструб один»."""
+    found = []
+    for i, t in enumerate(toks[:-1]):
+        name = next((v for k, v in DRONE_STEMS.items() if t.startswith(k)), None)
+        if name and _number(toks[i + 1]) is not None:
+            found.append(f"{name} {_number(toks[i + 1])}")
+    return found
+
+
 def _zone_intent(sentence: str, toks: list[str]) -> Optional[str]:
     low = sentence.lower()
     for kind, stems, also in ZONE_INTENTS:
@@ -160,7 +204,8 @@ def _zone_intent(sentence: str, toks: list[str]) -> Optional[str]:
 
 
 def _zone_events(sentences: list[str], speaker: Optional[str], callsign_ids: dict[str, str],
-                 out: ParsedReport, position: Optional[tuple[float, float]] = None) -> None:
+                 out: ParsedReport, position: Optional[tuple[float, float]] = None,
+                 drone: Optional[tuple[str, tuple[float, float]]] = None) -> None:
     """Zone reports: the intent's sentence and the ones after it (until the next intent) carry the
     distance, direction and radius, e.g. "Ворожий дрон. Вісімсот метрів на північний схід. Закрити п'ятсот"."""
     marks = [(k, _zone_intent(s, _tokens(s))) for k, s in enumerate(sentences)]
@@ -170,12 +215,16 @@ def _zone_events(sentences: list[str], speaker: Optional[str], callsign_ids: dic
         spatial_text = ". ".join(sentences[k:end])
         sp = parse_spatial(spatial_text)
         pid = callsign_ids.get(speaker or "")
+        if drone is not None:  # a pilot: placed from the drone they named
+            position = drone[1]
+            pid = None
         if pid is None and position is not None:
             # A truck driver isn't in the graph: place it from the device's position (geo/api `source`).
             # No direction heard means "here".
             here = sp.bearing_deg is None
-            ev = {"type": kind, "source": {"lat": position[0], "lon": position[1], "user_id": "driver"},
-                  "callsign": "DRIVER", "distance_m": 0.0 if here else sp.distance_m,
+            ev = {"type": kind, "source": {"lat": position[0], "lon": position[1],
+                                           "user_id": drone[0] if drone else "driver"},
+                  "callsign": drone[0] if drone else "DRIVER", "distance_m": 0.0 if here else sp.distance_m,
                   "bearing_deg": 0.0 if here else sp.bearing_deg,
                   "assumptions": sp.assumptions + (["at the reporter's position"] if here else []), "text": spatial_text}
             if sp.radius_m is not None:
@@ -194,17 +243,41 @@ def _zone_events(sentences: list[str], speaker: Optional[str], callsign_ids: dic
 
 
 def parse_report(text: str, callsign_ids: dict[str, str],
-                 position: Optional[tuple[float, float]] = None) -> ParsedReport:
-    """Turn one radio report into partial events. callsign_ids maps "BADGER 2-4" -> "sol-10".
+                 position: Optional[tuple[float, float]] = None,
+                 drones: Optional[dict[str, tuple[str, tuple[float, float]]]] = None) -> ParsedReport:
+    """Turn one radio report into partial events. callsign_ids maps "BADGER 2-4" -> "sol-10";
+    drones maps "HAWK 1" -> ("drn-01", (lat, lon)); position is the reporter's device (a driver).
 
     The squad named first without a soldier number ("Борсук два, медик") is the speaker; their
     medic is the subject of any low-stock request. A soldier's callsign plus a severity word is a
-    casualty. A sentence with supplies and a "need / running out" word is a low-stock request.
+    casualty; supplies asked for in the same sentence are a restock for that soldier's squad medic,
+    because drones deliver to medics only. A sentence with supplies and a "need / running out" word is
+    a low-stock request, with an urgency. A drone callsign with a loss word is a lost drone.
     """
     start = time.perf_counter()
     out = ParsedReport()
+    drones = drones or {}
     speaker: Optional[str] = None  # the medic's callsign
+    named_drone: Optional[str] = None  # the drone a pilot named: zones are placed from it
+    report_critical = False
     sentences = [s for s in (s.strip() for s in re.split(r"[.!?;\n]+", text)) if s]
+
+    def restock(medic: Optional[str], items: dict, urgency: Optional[str], sentence: str):
+        pid = callsign_ids.get(medic or "")
+        if pid is None:
+            out.unparsed.append(f"supplies requested but no medic callsign heard: {sentence}")
+            return
+        rank = lambda u: RESTOCK_PRIORITY[u] if u else 99  # unsaid: settled after the last sentence
+        for ev in out.events:  # one restock per medic per report
+            if ev["type"] == "LOW_STOCK" and ev["subject_id"] == pid:
+                for k, q in items.items():
+                    ev["items"][k] = max(ev["items"].get(k, 0), q)
+                if rank(urgency) < rank(ev["urgency"]):
+                    ev["urgency"] = urgency
+                return
+        out.events.append({"type": "LOW_STOCK", "subject_id": pid, "items": dict(items), "urgency": urgency,
+                           "callsign": medic})
+
     for sentence in sentences:
         toks = _tokens(sentence)
         # "трьохсот метрів" is a distance, not "300" (wounded): drop numbers followed by a unit
@@ -218,6 +291,18 @@ def parse_report(text: str, callsign_ids: dict[str, str],
                          if any(t.startswith(stems) for t in sev_toks)), None)
         items = _items(toks)
         needs = any(t.startswith(NEED_STEMS) for t in toks)
+        urgency = _urgency(sentence)
+
+        # Drone pilots: a named drone lost, or the drone a later threat is seen from.
+        for dcs in _drones(toks):
+            if dcs not in drones:
+                out.unparsed.append(f"unknown drone {dcs}")
+                continue
+            named_drone = named_drone or dcs
+            if _has(sentence, LOST_STEMS):
+                out.events.append({"type": "DRONE_LOST", "drone_id": drones[dcs][0], "callsign": dcs})
+        if _has(sentence, ETA_STEMS) and not items:
+            out.events.append({"type": "ETA_QUERY", "callsign": speaker})  # answered in handle_transcript
 
         for cs in soldiers:
             pid = callsign_ids.get(cs)
@@ -226,20 +311,22 @@ def parse_report(text: str, callsign_ids: dict[str, str],
             elif severity is None:
                 out.unparsed.append(f"{cs}: no severity heard (critical / wounded)")
             else:
-                ev = {"type": "CASUALTY", "subject_id": pid, "severity": severity, "callsign": cs}
-                if items and needs:
-                    ev["items"] = items
-                out.events.append(ev)
+                out.events.append({"type": "CASUALTY", "subject_id": pid, "severity": severity, "callsign": cs})
+                report_critical = report_critical or severity == "CRITICAL"
+                if items and needs:  # the squad medic treats them, so the medic gets the supplies
+                    restock(cs.rsplit("-", 1)[0] + "-DOC", items,
+                            "CRITICAL" if severity == "CRITICAL" else urgency or "URGENT", sentence)
         if items and needs and not soldiers:
             medic = next((cs for _, cs in calls if cs.endswith("-DOC")), speaker)
-            pid = callsign_ids.get(medic or "")
-            if pid is None:
-                out.unparsed.append(f"supplies requested but no medic callsign heard: {sentence}")
-            else:
-                out.events.append({"type": "LOW_STOCK", "subject_id": pid, "items": items, "callsign": medic})
-    _zone_events(sentences, speaker, callsign_ids, out, position)
+            restock(medic, items, urgency, sentence)
+    for ev in out.events:  # unless said otherwise, running short while treating a CRITICAL casualty is CRITICAL
+        if ev["type"] == "LOW_STOCK" and ev["urgency"] != "NON_URGENT":
+            ev["urgency"] = "CRITICAL" if report_critical else ev["urgency"] or "NON_URGENT"
+    lost = {e["callsign"] for e in out.events if e["type"] == "DRONE_LOST"}
+    pilot = (named_drone, drones[named_drone][1]) if named_drone and named_drone not in lost else None
+    _zone_events(sentences, speaker, callsign_ids, out, position, pilot)
     if not out.events and not out.unparsed:
-        out.unparsed.append("no casualty or supply request heard")
+        out.unparsed.append("no casualty, supply request, zone or lost drone heard")
     out.english = english_summary(out.events)
     out.parse_ms = round((time.perf_counter() - start) * 1000, 2)
     return out
@@ -250,14 +337,19 @@ def english_summary(events: list[dict]) -> str:
     for e in events:
         extra = ", ".join(f"{q} x {ENGLISH_ITEMS.get(k, k)}" for k, q in e.get("items", {}).items())
         if e["type"] == "CASUALTY":
-            parts.append(f"{e['callsign']} is {e['severity']}" + (f", needs {extra}" if extra else ""))
+            parts.append(f"{e['callsign']} is {e['severity']}")
+        elif e["type"] == "DRONE_LOST":
+            parts.append(f"{e['callsign']} lost")
+        elif e["type"] == "ETA_QUERY":
+            parts.append(f"{e['callsign'] or 'Medic'} asks when their drone arrives")
         elif e["type"] in ENGLISH_ZONES:
             r = f", radius {e['radius_m']:.0f} m" if e.get("radius_m") else ""
             where = ("at their position" if not e["distance_m"]
                      else f"{e['distance_m']:.0f} m at {e['bearing_deg']:.0f} degrees")
             parts.append(f"{e['callsign']} reports {ENGLISH_ZONES[e['type']]} {where}{r}")
         else:
-            parts.append(f"{e['callsign']} is running low: needs {extra}")
+            urgency = (e.get("urgency") or "NON_URGENT").replace("_", "-").lower()
+            parts.append(f"{e['callsign']} is running low: needs {extra} ({urgency})")
     return ". ".join(parts) + ("." if parts else "")
 
 
@@ -336,8 +428,14 @@ async def handle_transcript(text: str, language: Optional[str], stt: str, stt_ms
     speaker is the reporter's own callsign as they'd say it ("Борсук один, медик"), for a device that
     knows who is holding it; it is read as if spoken first, so "I'm out of blood" finds their medic."""
     from . import dev_server  # late import: dev_server includes this router
-    callsign_ids = {p.callsign: p.id for p in dev_server.world.repo.list_personnel()}
-    parsed = parse_report(f"{speaker}. {text}" if speaker else text, callsign_ids, position)
+    world = dev_server.world
+    callsign_ids = {p.callsign: p.id for p in world.repo.list_personnel()}
+    drones = {d.callsign: (d.id, (d.lat, d.lon)) for d in world.repo.list_drones() if d.status != "LOST"}
+    for f in world.tracker.flights.values():  # a drone in the air: where it is now, not where it was stored
+        cs = next((c for c, (i, _) in drones.items() if i == f.drone_id), None)
+        if cs:
+            drones[cs] = (f.drone_id, f.position())
+    parsed = parse_report(f"{speaker}. {text}" if speaker else text, callsign_ids, position, drones)
     report_id = f"voice-{int(time.time())}-{next(_ids)}"
     for k, ev in enumerate(parsed.events, start=1):
         ev["event_id"] = f"{report_id}-{k}"  # becomes the dispatch's request_id
@@ -345,11 +443,96 @@ async def handle_transcript(text: str, language: Optional[str], stt: str, stt_ms
                                                 parsed.unparsed, stt, stt_ms, parsed.parse_ms))
     results = []
     for ev in parsed.events:
+        if ev["type"] == "ETA_QUERY":  # a question, not an event: answer it from the live flights
+            results.append(eta_answer(world, callsign_ids.get(ev["callsign"] or "")))
+            continue
         raw = {k: v for k, v in ev.items() if k != "callsign"}
         results.append(await dev_server.process(raw, time.perf_counter()))
+    readback = build_readback(parsed.events, results, parsed.unparsed, world)
     return {"report_id": report_id, "transcript": text, "language": language, "english": parsed.english,
             "events": parsed.events, "unparsed": parsed.unparsed, "stt": stt, "stt_ms": stt_ms,
-            "parse_ms": parsed.parse_ms, "results": results}
+            "parse_ms": parsed.parse_ms, "results": results, "readback": readback}
+
+
+# ---- read-back (README_eta_relay.md): what the radio says back, Ukrainian first ------------------
+
+def _minutes_uk(n: int) -> str:
+    """"через 1 хвилину / 3 хвилини / 7 хвилин"."""
+    if n % 10 == 1 and n % 100 != 11:
+        return f"{n} хвилину"
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return f"{n} хвилини"
+    return f"{n} хвилин"
+
+
+def _drone_uk(callsign: str) -> str:
+    name, _, num = callsign.partition(" ")
+    return f"{DRONE_UK.get(name, name)} {num}".strip()
+
+
+def _person_uk(callsign: str) -> str:
+    """"BADGER 3-2" -> "Борсук 3-2", so the Ukrainian read-back says the callsign the medic used."""
+    uk = {v: k.capitalize() for k, v in CALLSIGN_STEMS.items() if not k.isascii()}
+    name, _, rest = callsign.partition(" ")
+    return f"{uk.get(name, name)} {rest}".strip()
+
+
+def eta_answer(world, medic_id: Optional[str]) -> dict:
+    """The live ETA of the drone flying to this medic, or where their request stands."""
+    if medic_id is None:
+        return {"status": "UNKNOWN_MEDIC"}
+    flights = [f for f in world.tracker.flights.values()
+               if f.phase == "EN_ROUTE" and f.dispatch is not None and f.dispatch.recipient_id == medic_id]
+    if flights:
+        f = min(flights, key=lambda f: f.total_m - f.flown_m)
+        drone = world.repo.get_drone(f.drone_id)
+        return {"status": "EN_ROUTE", "drone_id": f.drone_id, "callsign": drone.callsign if drone else f.drone_id,
+                "eta_s": round((f.total_m - f.flown_m) / f.speed_mps, 1)}
+    if any(e.subject_id == medic_id for e in world.engine.pending()):
+        return {"status": "QUEUED"}
+    return {"status": "NONE"}
+
+
+def build_readback(events: list[dict], results: list[dict], unparsed: list[str], world) -> dict:
+    """One short line per event, ETA first, under ten seconds of speech (README_eta_relay.md)."""
+    uk, en = [], []
+    for ev, res in zip(events, results):
+        t = ev["type"]
+        if res.get("drone_id") and res.get("eta_s") is not None and t in ("LOW_STOCK", "ETA_QUERY"):
+            drone = world.repo.get_drone(res["drone_id"])
+            cs = res.get("callsign") or (drone.callsign if drone else res["drone_id"])
+            mins = max(1, round(res["eta_s"] / 60))
+            lead = "Запит прийнято. " if t == "LOW_STOCK" else ""
+            uk.append(f"{lead}{_drone_uk(cs)} прибуде приблизно через {_minutes_uk(mins)}.")
+            en.append(f"{'Request received. ' if t == 'LOW_STOCK' else ''}{cs} arrives in about {mins} min.")
+        elif t == "LOW_STOCK":
+            uk.append("Запит прийнято. Вільного дрона зараз немає, ви в черзі.")
+            en.append("Request received. No drone free yet: you're in the queue.")
+        elif t == "ETA_QUERY":
+            status = res.get("status")
+            uk.append({"QUEUED": "Ваш запит у черзі, дрон ще не вилетів.",
+                       "NONE": "Відкритих запитів немає."}.get(status, "Не знаю, хто питає. Назвіть позивний."))
+            en.append({"QUEUED": "Your request is queued; no drone has left yet.",
+                       "NONE": "No open requests."}.get(status, "Didn't catch who is asking: say your callsign."))
+        elif t == "CASUALTY":
+            ev_ = res.get("evacuation") or {}
+            if ev_.get("eta_s"):
+                mins = max(1, round(ev_["eta_s"] / 60))
+                uk.append(f"Прийнято, {_person_uk(ev['callsign'])}. Евакуація: приблизно {_minutes_uk(mins)}.")
+                en.append(f"Copy, {ev['callsign']}. Evacuation to {ev_.get('facility_name', 'hospital')}, about {mins} min.")
+            else:
+                uk.append(f"Прийнято, {_person_uk(ev['callsign'])}.")
+                en.append(f"Copy, {ev['callsign']}.")
+        elif t == "DRONE_LOST":
+            uk.append(f"Прийнято, {_drone_uk(ev['callsign'])} списано. Доставку передано іншому дрону.")
+            en.append(f"Copy, {ev['callsign']} written off. Its delivery goes to another drone.")
+        else:  # spoken zones
+            uk.append("Прийнято, зону нанесено на карту. Маршрути змінено.")
+            en.append("Copy, zone on the map. Routes adjusted.")
+    if not uk:
+        uk.append("Не зрозумів. Повторіть, будь ласка.")
+        en.append("Didn't catch that. Say again.")
+    return {"uk": " ".join(dict.fromkeys(uk)), "en": " ".join(dict.fromkeys(en))}
 
 
 @router.post("/voice")

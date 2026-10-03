@@ -330,6 +330,7 @@
     <h2>Radio <button class="ghost x" data-close>✕</button></h2>
     <p class="hint">A spoken report in Ukrainian (or English) becomes the same casualty, restock or zone as the buttons.</p>
     <div class="group"><h3>Scripted calls</h3><div class="clips" id="clipBtns"></div></div>
+    <div class="row" style="margin:-2px 4px 8px"><label style="font-size:14px;color:var(--muted)"><input type="checkbox" id="speakReplies" checked style="min-height:0;width:auto;-webkit-appearance:checkbox;appearance:auto"> Speak replies</label></div>
     <div class="group" id="radioOut"><h3>Last report</h3><div class="empty" style="padding:0 4px 8px">Nothing heard yet</div></div>
     <div class="group"><h3>Who is speaking</h3>
       <div class="row"><select id="speakerSel"></select></div>
@@ -1366,6 +1367,9 @@ const CLIPS = [
   { name: 'badger1-stock-uk', label: '📦 Medic: low on tourniquets' },
   { name: 'badger2-threat-uk', label: '⚠️ Medic: enemy drone' },
   { name: 'driver-road-uk', label: '🚚 Driver: road blocked', driver: true },
+  { name: 'badger1-eta-uk', label: '⏱ Medic: how long?' },
+  { name: 'falcon2-threat-uk', label: '🛩 Pilot: enemy drone' },
+  { name: 'hawk3-lost-uk', label: '💥 Pilot: drone shot down' },
   { name: 'badger1-wounded-en', label: '🇬🇧 Medic: wounded (EN)' },
 ];
 const DRIVER_DEFAULT = { lat: 47.672, lon: 35.585 };  // DEMO: a truck on the sector roads (fictional)
@@ -1404,16 +1408,30 @@ function showRadio(r, wallMs) {
   if (r.detail) { out.innerHTML = `<h3>Last report</h3><div class="un">${esc(String(r.detail))}</div>`; return; }
   const ev = r.events.map((e, i) => {
     const res = r.results[i] || {};
-    const what = res.drone_id ? `${esc(name(res.drone_id))}, ETA ${fmtEta(res.eta_s)}, decided in ${res.latency_ms} ms`
+    const what = e.type === 'ETA_QUERY' ? (res.eta_s != null ? `${esc(res.callsign)} arrives in ${fmtEta(res.eta_s)}` : esc((res.status || '').toLowerCase().replace('_', ' ')))
+      : res.drone_id ? `${esc(name(res.drone_id))}, ETA ${fmtEta(res.eta_s)}, decided in ${res.latency_ms} ms`
       : res.zone ? `${esc((GEO_LABEL[res.zone.properties.kind] || 'zone').toLowerCase())} on the map${res.rerouted && res.rerouted.length ? `, ${res.rerouted.length} rerouted` : ''}`
       : e.type === 'CASUALTY' ? (res.evacuation ? 'evacuation started' : 'status set')
+      : e.type === 'DRONE_LOST' ? (res.ok ? 'written off, delivery re-sent' : esc(res.msg || 'already lost'))
       : `no drone yet: ${esc(res.reason || 'queued')}`;
-    return `<div class="ev">${esc(e.callsign)}: ${esc(e.type.replace('_', ' ').toLowerCase())} → ${what}</div>`;
+    const kind = e.type === 'LOW_STOCK' ? `${(e.urgency || 'NON_URGENT').replace('_', '-').toLowerCase()} restock` : e.type.replace(/_/g, ' ').toLowerCase();
+    return `<div class="ev">${esc(e.callsign || 'medic')}: ${esc(kind)} → ${what}</div>`;
   }).join('');
   const uk = /[\u0400-\u04FF]/.test(r.transcript) ? `<div><span class="k">Heard</span><q>${esc(r.transcript)}</q></div>` : '';
   out.innerHTML = `<h3>Last report</h3>${uk}<div><span class="k">Understood</span>${esc(r.english || '–')}</div>${ev}` +
     r.unparsed.map(u => `<div class="un">Not acted on: ${esc(u)}</div>`).join('') +
+    (r.readback ? `<div><span class="k">Reply 🔊</span><b>${esc(r.readback.uk)}</b><br><span style="color:var(--muted)">${esc(r.readback.en)}</span></div>` : '') +
     `<div><span class="k">Timings</span>speech ${r.stt_ms} ms (${esc(r.stt)}), parse ${r.parse_ms} ms, total ${wallMs} ms</div>`;
+  if (r.readback) speak(r.readback);
+}
+// The radio answers out loud (README_eta_relay.md): the browser's own text to speech, offline where the
+// OS has a Ukrainian voice; English if it hasn't. Untick "Speak replies" to keep the room quiet.
+function speak(rb) {
+  if (!document.getElementById('speakReplies').checked || !window.speechSynthesis) return;
+  const voices = speechSynthesis.getVoices(), uk = voices.find(v => v.lang && v.lang.toLowerCase().startsWith('uk'));
+  const u = new SpeechSynthesisUtterance(uk ? rb.uk : rb.en);
+  u.lang = uk ? 'uk-UA' : 'en-GB'; if (uk) u.voice = uk;
+  speechSynthesis.cancel(); speechSynthesis.speak(u);
 }
 async function sendVoice(path, body, headers) {
   const t = performance.now();
