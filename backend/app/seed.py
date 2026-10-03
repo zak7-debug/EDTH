@@ -204,6 +204,37 @@ NO_FLY_ZONES = [
 ]
 
 
+# Cover for temporary sites (resilience.py): where a stand-in hospital or distribution point can set up
+# out of sight. Invented terrain tags, not survey data: real geography at region level, generic names,
+# no real buildings, villages or positions. WOODLAND = tree cover (camouflage nets, vehicle hides);
+# STRUCTURES = disused farm or industrial buildings on a town's outskirts (roof cover, hard standing).
+# Deliberately no "inside a town" kind: medical units rely on protected status, and setting up among
+# civilians would put both at risk. (id, kind, name, lat, lon, radius_m)
+# DEMO / TUNE: three sit 4 to 6 km from the Role 2 hospital, two near the forward distribution point.
+@dataclass
+class CoverArea:
+    id: str
+    kind: str  # WOODLAND | STRUCTURES
+    name: str
+    lat: float
+    lon: float
+    radius_m: float
+
+    def to_dict(self) -> dict:
+        return dict(self.__dict__)
+
+
+COVER_AREAS = [
+    CoverArea("cov-01", "WOODLAND", "Woodland belt along a river valley (sector rear)", 47.7850, 35.3750, 1200),
+    CoverArea("cov-02", "STRUCTURES", "Disused farm buildings (sector rear)", 47.7420, 35.3650, 400),
+    CoverArea("cov-03", "WOODLAND", "Shelterbelt woodland (sector rear)", 47.7200, 35.4100, 700),
+    CoverArea("cov-04", "STRUCTURES", "Disused industrial site on a town's outskirts (sector rear)", 47.8050, 35.4700, 600),
+    CoverArea("cov-05", "WOODLAND", "Mixed woodland (Zaporizhzhia region)", 47.8750, 35.2050, 1500),
+    CoverArea("cov-06", "STRUCTURES", "Disused warehouses on a town's outskirts (Zaporizhzhia region)", 47.8080, 35.2050, 600),
+    CoverArea("cov-07", "WOODLAND", "Shelterbelt woodland (sector)", 47.6920, 35.5150, 600),
+    CoverArea("cov-08", "WOODLAND", "Woodland strip (sector)", 47.7000, 35.5850, 700),
+]
+
 def _build_personnel(rng: random.Random) -> list[Person]:
     people: list[Person] = []
     sol_n = 0

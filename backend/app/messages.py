@@ -11,7 +11,8 @@ from .models import Dispatch, Event, NoDispatch
 from .repo import GraphRepo
 
 WS_TYPES = ("snapshot", "event", "dispatch", "no_dispatch", "drone_update", "delivered", "queue", "query_log", "zone_added", "reroute", "drone_lost", "supply_chain",
-            "stock_update", "evacuation", "evac_update", "admitted", "voice_report", "site_deployed")
+            "stock_update", "evacuation", "evac_update", "admitted", "voice_report", "site_deployed",
+            "site_ready")
 
 
 def msg(type_: str, data: dict) -> dict:
@@ -141,8 +142,16 @@ def voice_report_msg(report_id: str, transcript: str, language: Optional[str], e
                                 "stt": stt, "stt_ms": stt_ms, "parse_ms": parse_ms})
 
 
-def site_deployed_msg(facility, links, replaces: str, ms: float) -> dict:
-    """A temporary site was set up in place of a destroyed one (resilience.py). The map adds it; an
-    updated `supply_chain` (changed.status = "DEPLOYED") and any diverted `evacuation`s follow."""
+def site_deployed_msg(facility, links, replaces: str, ms: float, **plan) -> dict:
+    """A temporary site's team was sent in place of a destroyed site (resilience.py). It is SETTING_UP:
+    the map shows it with a countdown (plan["setup"]["ready_in_s"], real seconds). plan also carries
+    `where`, `cover`, `convoy` and `drone`. An updated `supply_chain` and `stock_update`s for the team
+    and convoy follow; `site_ready` comes when it opens."""
     return msg("site_deployed", {"facility": facility.to_dict(), "links": [l.to_dict() for l in links],
-                                 "replaces": replaces, "ms": ms})
+                                 "replaces": replaces, "ms": ms, **plan})
+
+
+def site_ready_msg(facility, ms: float) -> dict:
+    """A temporary site finished setting up and is OPERATIONAL (resilience.finish_setup). An updated
+    `supply_chain`, any `evacuation`s it diverts and the drone with blood follow."""
+    return msg("site_ready", {"facility": facility.to_dict(), "ms": ms})
