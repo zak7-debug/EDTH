@@ -7,9 +7,44 @@ Team: A is Zak, B is Ollie, C is Sasank, D is Arnav. Live version: https://claud
 By 22:00 tonight the full demo scenario runs end to end on TuringDB; Sunday morning is only polish, rehearsal and the pitch, with the demo at 13:00.
 
 - **Team:** four people. Letters A to D are used throughout: A is Zak, B is Ollie, C is Sasank, D is Arnav.
-- **Times** are local, assuming we start at 10:00 Saturday. If we start later, shift every Saturday slot by the same amount but keep the 22:00 freeze.
+- **Times** are local (CEST). Zak starts now, about 10:00; the others join as they arrive and pick up their own task file. If your clock is UK time, you have one extra hour on every slot.
 - **Must work in the demo:** event in, dispatch under a second, live ETA countdown, one reroute around a no-fly zone, a second simultaneous emergency taking a different drone, a visible latency counter, and a clear "no drone available" reason.
 - **Rule for everyone:** merge small working increments to `main` at least every 90 minutes; nobody holds a branch overnight.
+
+## Start now: Zak's first hour
+
+Zak lays the shared foundation alone, so each teammate can start their own task within ten minutes of arriving.
+
+1. **Repo skeleton (10 min).** Pull `main` and create this layout, then push it:
+
+    ```text
+    backend/app/main.py        FastAPI app and /ws (Sasank)
+    backend/app/models.py      dataclasses: Person, Drone, Depot, Event, Dispatch (Zak)
+    backend/app/repo.py        GraphRepo protocol + InMemoryRepo (Zak)
+    backend/app/turing_repo.py TuringDB implementation (Ollie)
+    backend/app/dispatch.py    dispatch engine (Zak)
+    backend/app/routing.py     waypoint graph + A* (Ollie)
+    backend/app/seed.py        seed data shared by both repos (Zak)
+    sim/simulator.py           event simulator, posts to /events (Sasank)
+    frontend/index.html        Leaflet dashboard, no build step (Arnav)
+    contracts/                 schema, event and WebSocket formats
+    tests/                     pytest
+    start.sh                   one-command start
+    ```
+
+2. **Environment (5 min).**
+
+    ```bash
+    python3 -m venv .venv && source .venv/bin/activate
+    pip install fastapi "uvicorn[standard]" turingdb pytest httpx
+    ```
+
+3. **TuringDB smoke test (15 min).** This is the biggest risk, so test it before anything else. Run `turingdb -demon`, then in Python create a graph, open a change, `CREATE` one node, `COMMIT`, `CHANGE SUBMIT`, `MATCH` it back, and `SET` one property. Time each step and post the numbers for Ollie. Per the [quickstart](https://docs.turingdb.ai/quickstart) and [query cheatsheet](https://docs.turingdb.ai/query/cheatsheet), the server listens on port 6666, every write goes through a change that is committed and submitted, `SET` updates properties, and every node needs a label.
+4. **Contracts (20 min).** Write `models.py`, the `GraphRepo` protocol in `repo.py`, and `contracts/messages.md` with the event and WebSocket formats from the Contracts section below.
+5. **Seed data (10 min).** In `seed.py`, place 3 squads (20 personnel, 3 of them medics), 8 drones, 3 depots and 2 no-fly polygons around Grafenwöhr training area (centre about 49.70 N, 11.93 E), as plain Python data both repos load.
+6. **Push and brief.** Push to `main`, then send each teammate the doc link and their task file. Each arrival gets a five-minute walkthrough of the contracts, then starts the first task in their file.
+
+Hour-by-hour tasks, each block with a done-when check: [Zak](tasks/zak.md) · [Ollie](tasks/ollie.md) · [Sasank](tasks/sasank.md) · [Arnav](tasks/arnav.md)
 
 ## Roles
 
@@ -119,7 +154,7 @@ The biggest risk is TuringDB, so the plan never lets it block anyone but B, and 
 - If B is stuck on any single TuringDB issue for 45 minutes, B tells A and everyone keeps building on the in-memory repo.
 - **14:00 go or no-go:** the TuringDB repo must pass the same repo tests as the in-memory one (seed, candidate query, property update, atomic claim). If not, B keeps going on TuringDB but the integration runs on in-memory.
 - **20:00 final call:** if TuringDB still can't run the demo scenario, we demo on in-memory and pitch TuringDB through the schema and query panel. Nobody touches the database layer after 20:00.
-- Known gaps to check first: whether TuringDB supports in-place property updates and transactions. If not, model drone state as a latest-version node and do the atomic claim with an in-process lock in the engine.
+- What the docs say: `SET` updates properties in place, but every write goes through a change that must be committed and submitted. So drone claiming uses an in-process lock in the engine, and graph writes happen just after the dispatch message goes out, keeping commits off the latency path.
 
 **Other risks**
 
