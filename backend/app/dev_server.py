@@ -252,11 +252,16 @@ async def scenario(name: str):
     if _scenario and not _scenario.done():
         return {"ok": False, "msg": "scenario already running"}
 
+    await reset()  # every run starts from the same seeded world
+
     async def run():
         start = time.monotonic()
         for at, ev in DEMO_SCRIPT:
             await asyncio.sleep(max(0.0, at - (time.monotonic() - start)))
-            await process(dict(ev), time.perf_counter())
+            try:
+                await process(dict(ev), time.perf_counter())
+            except Exception as e:  # one bad event must not stall the rest of the demo
+                print("scenario event failed:", ev, e)
 
     _scenario = asyncio.create_task(run())
     return {"ok": True, "events": len(DEMO_SCRIPT)}
