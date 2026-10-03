@@ -108,3 +108,17 @@ def test_truck_driver_reports_from_device_position(monkeypatch):
         assert r["results"][0]["zone"]["properties"]["kind"] == "ROAD_BLOCKED"
         r = client.post("/voice/text", json={"text": "Дорога заблокована."}).json()
         assert r["events"] == [] and "no callsign" in r["unparsed"][0]
+
+
+def test_decode_audio_without_faster_whispers_decoder():
+    """Mic and WAV audio decode to 16 kHz mono ourselves (some PyAV builds reject faster-whisper's call)."""
+    import io, wave
+    import pytest
+    np = pytest.importorskip("numpy")  # comes with requirements-voice.txt
+    from backend.app.voice import decode_audio
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(2); w.setsampwidth(2); w.setframerate(44100)
+        w.writeframes(np.zeros(44100 * 2, dtype="<i2").tobytes())
+    pcm = decode_audio(buf.getvalue())
+    assert pcm.dtype == np.float32 and len(pcm) == 16000

@@ -274,9 +274,45 @@ def _whisper():
     return _model
 
 
+SAMPLE_RATE = 16_000  # what Whisper expects
+
+
+def decode_audio(audio: bytes):
+    """Audio bytes -> 16 kHz mono float32 samples, without faster-whisper's own decoder.
+
+    faster_whisper.audio.decode_audio calls av.open(..., metadata_errors=...), which some PyAV builds
+    reject ("open() got an unexpected keyword argument 'metadata_errors'"). WAV (scripted clips, the
+    laptop pipeline) is read with the standard library; anything else (the browser's webm/ogg mic
+    recording) goes through PyAV with plain arguments."""
+    import numpy as np
+    if audio[:4] == b"RIFF":
+        import wave
+        with wave.open(io.BytesIO(audio)) as w:
+            if w.getsampwidth() == 2:
+                pcm = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(np.float32) / 32768.0
+                pcm = pcm.reshape(-1, w.getnchannels()).mean(axis=1)
+                rate = w.getframerate()
+                if rate != SAMPLE_RATE:  # linear resample: fine for speech
+                    n = int(len(pcm) * SAMPLE_RATE / rate)
+                    pcm = np.interp(np.linspace(0, len(pcm) - 1, n), np.arange(len(pcm)), pcm).astype(np.float32)
+                return pcm
+    import av
+    resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
+    chunks = []
+    with av.open(io.BytesIO(audio), mode="r") as container:
+        for frame in container.decode(audio=0):
+            for out in resampler.resample(frame) or []:
+                chunks.append(out.to_ndarray().reshape(-1))
+        for out in resampler.resample(None) or []:  # flush
+            chunks.append(out.to_ndarray().reshape(-1))
+    if not chunks:
+        raise ValueError("no audio in the recording")
+    return np.concatenate(chunks).astype(np.float32) / 32768.0
+
+
 def transcribe(audio: bytes, language: Optional[str] = None) -> tuple[str, str]:
     """(transcript, detected language). Raises if faster-whisper or its model is unavailable."""
-    segments, info = _whisper().transcribe(io.BytesIO(audio), language=language, beam_size=1,
+    segments, info = _whisper().transcribe(decode_audio(audio), language=language, beam_size=1,
                                            vad_filter=False, condition_on_previous_text=False)
     return " ".join(s.text.strip() for s in segments).strip(), info.language
 
@@ -329,7 +365,9 @@ async def post_voice(request: Request, clip: Optional[str] = None, language: Opt
     except Exception as e:  # no faster-whisper, no model, or bad audio: use the scripted transcript
         text, lang, stt = cached_transcript(clip), language or "uk", "cached"
         if text is None:
-            raise HTTPException(503, f"speech to text unavailable ({e}) and no transcript for clip {clip!r}")
+            raise HTTPException(503, f"Speech to text failed on this machine ({type(e).__name__}: {e}). Scripted calls "
+                                     "and typed text still work. To fix the mic: pip install -r requirements-voice.txt, "
+                                     "then python scripts/fetch_whisper.py while online.")
     stt_ms = round((time.perf_counter() - start) * 1000, 1)
     return await handle_transcript(text, lang, stt, stt_ms, speaker, _position(lat, lon))
 

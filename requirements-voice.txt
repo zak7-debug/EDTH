@@ -1,1 +1,3 @@
-faster-whisper>=1.0
+faster-whisper>=1.1  # offline speech to text (CPU, int8)
+av>=12               # decodes the browser mic recording (webm/ogg)
+numpy
