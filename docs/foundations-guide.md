@@ -183,3 +183,17 @@ The real-time dispatch path is unchanged: drones still launch from depots, and t
 
 **To change:** colours are CSS variables at the top and `STATUS_COLOUR` / `DRONE_COLOUR` in the script. One function per message type lives in `handlers`. After editing `seed.py`, run `python scripts/export_mock.py` to refresh the mock.
 
+## 12. Graph queries panel (`backend/app/querylog.py`)
+
+**What it does:** shows the judges exactly what TuringDB did for the last request. The panel lists:
+- the Cypher queries run inside the timed decision: the one candidate query, the claim check and the claim write
+- the writes made after the broadcast: the `DISPATCHED_TO` edge and the casualty's status
+
+Each query shows its milliseconds and row count; click one to see the full text.
+
+**How it works:** `TuringRepo._read` and `_write` call `querylog.record()` after every query or write change. `record()` keeps nothing unless a `querylog.capture()` block is open, so it costs nothing elsewhere. The dev server opens one block around `engine.handle()` and one around `engine.record()`, then sends two `query_log` messages (`phase` "decide" and "record"; see contracts/messages.md).
+
+**Why it matters for the final product:** it backs the TuringDB slide with live evidence: one query finds every suitable drone, and the whole decision is a few milliseconds of graph work. On the in-memory repo the panel says there are no graph queries.
+
+**To change:** `MAX_CYPHER_CHARS` sets how much of a long statement is shown. Add `querylog.capture()` anywhere else you want logged, for example around `complete_dispatch` in flights.py.
+

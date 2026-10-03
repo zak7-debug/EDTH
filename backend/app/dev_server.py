@@ -27,7 +27,8 @@ from fastapi.staticfiles import StaticFiles
 
 from .dispatch import DispatchEngine
 from .flights import FlightTracker
-from .messages import dispatch_msg, event_msg, no_dispatch_msg, queue_msg, snapshot
+from . import querylog
+from .messages import dispatch_msg, event_msg, no_dispatch_msg, query_log_msg, queue_msg, snapshot
 from .models import Dispatch, Event
 from .repo import get_repo
 
@@ -98,9 +99,13 @@ def _complete(d: dict) -> Event:
 async def process(raw: dict, received_perf: float) -> dict:
     event = _complete(raw)
     await broadcast(event_msg(event, time.time()))
-    result = world.engine.handle(event, received_perf)  # the timed decision
+    with querylog.capture() as decide_q:
+        result = world.engine.handle(event, received_perf)  # the timed decision
     await broadcast(dispatch_msg(result) if isinstance(result, Dispatch) else no_dispatch_msg(result))
-    world.engine.record(result, event)  # graph writes after the broadcast
+    with querylog.capture() as record_q:
+        world.engine.record(result, event)  # graph writes after the broadcast
+    await broadcast(query_log_msg(event.event_id, "decide", decide_q))
+    await broadcast(query_log_msg(event.event_id, "record", record_q))
     if isinstance(result, Dispatch):
         world.tracker.start(result)
     await broadcast(queue_msg(world.engine.pending()))

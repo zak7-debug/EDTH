@@ -30,6 +30,7 @@ One socket. Every message is `{"type": ..., "data": ...}`.
 | `no_dispatch` | no drone fits | `request_id`, `recipient_id`, `reason` (text), `reason_code` (`NO_STOCK`/`ALL_BUSY`/`OUT_OF_RANGE`), `nearest_alternative` (`{drone_id, eta_s, note}` or null), `latency_ms` |
 | `drone_update` | each tick, about 2/s per moving drone | `drone_id`, `lat`, `lon`, `status`, `eta_s`, `request_id` |
 | `delivered` | drone arrives | `request_id`, `drone_id`, `recipient_id`, `items`, `ts` |
+| `query_log` | after each decision and its writes | `request_id`, `phase` (`decide` = inside the timed decision, `record` = graph writes after the broadcast), `queries`: list of `{graph, kind (read/write), cypher, ms, rows}`, `total_ms`. Empty `queries` on the in-memory repo |
 | `queue` | queue changes | `pending`: list of `{request_id, type, severity, subject_id, items, ts, position}` in triage order |
 
 `latency_ms` is measured from the moment `POST /events` receives the event to the moment the dispatch decision is made, before any graph writes.

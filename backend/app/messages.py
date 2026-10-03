@@ -10,7 +10,7 @@ from typing import Iterable
 from .models import Dispatch, Event, NoDispatch
 from .repo import GraphRepo
 
-WS_TYPES = ("snapshot", "event", "dispatch", "no_dispatch", "drone_update", "delivered", "queue")
+WS_TYPES = ("snapshot", "event", "dispatch", "no_dispatch", "drone_update", "delivered", "queue", "query_log")
 
 
 def msg(type_: str, data: dict) -> dict:
@@ -63,3 +63,11 @@ def queue_msg(pending: Iterable[Event]) -> dict:
          "subject_id": e.subject_id, "items": e.items, "ts": e.ts, "position": i + 1}
         for i, e in enumerate(pending)
     ]})
+
+
+def query_log_msg(request_id: str, phase: str, entries: list[dict]) -> dict:
+    """Graph queries one request ran. phase: "decide" (inside the timed decision) or "record"
+    (the writes after the broadcast). entries come from querylog.capture()."""
+    return msg("query_log", {"request_id": request_id, "phase": phase, "queries": entries,
+                             "total_ms": round(sum(e["ms"] for e in entries), 2)})
+

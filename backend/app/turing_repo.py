@@ -35,6 +35,7 @@ from typing import Iterable, Optional
 
 from turingdb import TuringDB
 
+from . import querylog
 from .models import ITEMS, Depot, Dispatch, Drone, Facility, NoFlyZone, Person, SupplyLink, Unit
 from .seed import SeedData
 
@@ -130,14 +131,19 @@ class TuringRepo:
     # low-level helpers
     def _read(self, graph: str, q: str):
         with self._lock:
+            t = time.perf_counter()
             self.db.set_graph(graph)
-            return self.db.query(q)
+            df = self.db.query(q)
+            querylog.record(graph, q, (time.perf_counter() - t) * 1000, len(df), "read")  # HOOK: query log panel
+            return df
 
     # Every write: CHANGE NEW -> query, COMMIT (each) -> CHANGE SUBMIT -> back to main.
     # ~6 ms on the in-memory server, ~85 ms on a disk-backed one (docs/turingdb-notes.md).
     def _write(self, graph: str, queries: Iterable[str]) -> None:
         """Run queries in one change and submit. COMMIT after each so later ones can MATCH."""
+        queries = list(queries)
         with self._lock:
+            t = time.perf_counter()
             self.db.set_graph(graph)
             self.db.new_change()  # also checks the client out onto the new change
             try:
@@ -147,6 +153,8 @@ class TuringRepo:
                 self.db.query("CHANGE SUBMIT")
             finally:
                 self.db.checkout()
+            # One log entry per change, timed end to end (new change -> submit).
+            querylog.record(graph, " ; ".join(queries), (time.perf_counter() - t) * 1000, None, "write")
 
     # seeding
     def _reset_graph(self, name: str) -> None:

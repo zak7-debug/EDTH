@@ -66,6 +66,14 @@
   #log .t { color: var(--muted); font: 13px ui-monospace, monospace; padding-top: 2px; }
   #log .ms { font: 600 14px ui-monospace, monospace; color: var(--accent); }
   #log .dispatch { color: var(--route); } #log .nod { color: var(--critical); } #log .deliv { color: var(--ok); }
+  /* Graph queries panel (query_log messages) */
+  #queries .qh { font-size: 14px; color: var(--muted); margin-bottom: 4px; }
+  #queries .qh b { color: var(--accent); font-family: ui-monospace, monospace; }
+  #queries .cy { font: 12px/1.35 ui-monospace, Menlo, monospace; color: #c9d1d9; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 7px; margin-bottom: 4px; max-height: 64px; overflow: hidden; cursor: pointer; word-break: break-all; }
+  #queries .cy.open { max-height: none; }
+  #queries .cy .m { float: right; color: var(--accent); font-weight: 700; margin-left: 8px; }
+  #queries .cy .w { color: var(--wounded); }
   #queue .q { display: flex; justify-content: space-between; padding: 4px 0; font-size: 15px; }
   .empty { color: var(--muted); font-size: 14px; }
   .sev-CRITICAL { color: var(--critical); font-weight: 700; } .sev-WOUNDED { color: var(--wounded); font-weight: 700; }
@@ -129,6 +137,7 @@
         <input id="qty" type="number" min="1" value="2"><button id="lowBtn">Low stock</button></div>
     </section>
     <section id="queue"><h2>Waiting for a drone</h2><div class="empty">Nobody waiting</div></section>
+    <section id="queries"><h2>Graph queries (last request)</h2><div class="empty">None yet</div></section>
     <section style="border-bottom:0;padding-bottom:4px"><h2>Event log</h2></section>
     <div id="log"></div>
   </aside>
@@ -309,6 +318,17 @@ const handlers = {
     if (p && p.kind === 'MEDIC') for (const [k, v] of Object.entries(x.items)) p.stock[k] = (p.stock[k] || 0) + v;
     if (p) { drawPerson(p); flash(p); }
     log(`Delivered to ${esc(name(x.recipient_id))} by ${esc(name(x.drone_id))}: ${esc(fmtItems(x.items))}`, 'deliv');
+  },
+  // HOOK: query_log. "decide" = what TuringDB ran inside the timed decision; "record" = the writes after.
+  query_log(x) {
+    const el = document.getElementById('queries');
+    if (x.phase === 'decide') { el.dataset.req = x.request_id; el.innerHTML = '<h2>Graph queries (last request)</h2>'; }
+    else if (el.dataset.req !== x.request_id) return;
+    const label = x.phase === 'decide' ? 'Decision' : 'Writes after broadcast';
+    if (!x.queries.length) { if (x.phase === 'decide') el.innerHTML += '<div class="empty">In-memory store: no graph queries</div>'; return; }
+    el.innerHTML += `<div class="qh">${label} · ${x.queries.length} quer${x.queries.length > 1 ? 'ies' : 'y'} · <b>${x.total_ms.toFixed(1)} ms</b></div>` +
+      x.queries.map(q => `<div class="cy" onclick="this.classList.toggle('open')"><span class="m">${q.ms.toFixed(1)} ms${q.rows != null ? ' · ' + q.rows + ' rows' : ''}</span>` +
+        `<span class="${q.kind === 'write' ? 'w' : ''}">${esc(q.graph)}</span> ${esc(q.cypher)}</div>`).join('');
   },
   queue(q) {
     const el = document.getElementById('queue');
