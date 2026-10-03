@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Radio test</title>
+<style>
+  :root { --bg: #11161c; --panel: #1b222b; --text: #e6edf3; --muted: #8b98a5; --accent: #4fa3ff; --ok: #3fb950; --warn: #d29922; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.hint { color: var(--muted); margin: 0 0 16px; }
+  section { background: var(--panel); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; }
+  button { background: #263140; color: var(--text); border: 1px solid #34404f; border-radius: 6px; padding: 8px 12px; margin: 0 6px 6px 0; cursor: pointer; font: inherit; }
+  button:hover { border-color: var(--accent); }
+  button.rec { border-color: #f85149; }
+  textarea { width: 100%; box-sizing: border-box; min-height: 64px; background: #0d1117; color: var(--text); border: 1px solid #34404f; border-radius: 6px; padding: 8px; font: inherit; }
+  .out div { margin: 4px 0; }
+  .k { color: var(--muted); display: inline-block; min-width: 92px; }
+  .ev { color: var(--ok); }
+  .un { color: var(--warn); }
+  code { font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Radio test</h1>
+  <p class="hint">Keep the dashboard open in another tab: each report below triggers the same dispatches as the trigger panel. Lines are fictional (BADGER callsigns from the seed).</p>
+
+  <section>
+    <h2>Scripted clips</h2>
+    <div id="clips"></div>
+    <p class="hint" id="cliphint"></p>
+  </section>
+
+  <section>
+    <h2>Microphone</h2>
+    <button id="mic">Hold to talk</button>
+    <span class="hint">Needs faster-whisper on the server. Try: «Борсук два, медик. Борсук два-п'ять, поранений.»</span>
+  </section>
+
+  <section>
+    <h2>Type a transcript</h2>
+    <textarea id="text">Борсук три, медик. Борсук три-два, важкий, масивна кровотеча з ноги. У мене закінчується кров, потрібно дві одиниці.</textarea>
+    <button id="send">Send text</button>
+  </section>
+
+  <section class="out" id="out"><h2>Last report</h2><div class="hint">Nothing sent yet.</div></section>
+</main>
+<script>
+const CLIPS = ["badger3-critical-uk", "badger1-stock-uk", "badger1-wounded-en"];
+const out = document.getElementById("out");
+
+function show(r, wallMs) {
+  if (r.detail) { out.innerHTML = `<h2>Last report</h2><div class="un">${r.detail}</div>`; return; }
+  const ev = r.events.map((e, i) => {
+    const res = r.results[i] || {};
+    const what = res.drone_id ? `drone ${res.drone_id}, ETA ${Math.round(res.eta_s)} s, decided in ${res.latency_ms} ms`
+                              : `no drone yet: ${res.reason || "queued"}`;
+    return `<div class="ev">${e.type} ${e.callsign} (${e.subject_id}) ${e.severity || ""} ${e.items ? JSON.stringify(e.items) : ""} → ${what}</div>`;
+  }).join("");
+  out.innerHTML = `<h2>Last report</h2>
+    <div><span class="k">Heard</span>${r.transcript} <code>[${r.language || "?"}]</code></div>
+    <div><span class="k">English</span>${r.english || "–"}</div>
+    ${ev}${r.unparsed.map(u => `<div class="un">Not acted on: ${u}</div>`).join("")}
+    <div><span class="k">Timings</span>speech to text ${r.stt_ms} ms (${r.stt}), parse ${r.parse_ms} ms, round trip ${wallMs} ms</div>`;
+}
+
+async function post(url, body, headers) {
+  const t = performance.now();
+  const resp = await fetch(url, { method: "POST", body, headers });
+  show(await resp.json(), Math.round(performance.now() - t));
+}
+
+const clipsDiv = document.getElementById("clips");
+for (const name of CLIPS) {
+  const b = document.createElement("button");
+  b.textContent = name;
+  b.onclick = async () => {
+    let audio = null;
+    for (const ext of ["mp3", "wav", "webm", "ogg"]) {
+      const r = await fetch(`${name}.${ext}`);
+      if (r.ok) { audio = await r.blob(); new Audio(URL.createObjectURL(audio)).play(); break; }
+    }
+    document.getElementById("cliphint").textContent = audio ? "" : `No audio file for ${name} yet: using its scripted transcript.`;
+    await post(`/voice?clip=${name}`, audio || new Blob([]));
+  };
+  clipsDiv.appendChild(b);
+}
+
+document.getElementById("send").onclick = () =>
+  post("/voice/text", JSON.stringify({ text: document.getElementById("text").value }), { "Content-Type": "application/json" });
+
+let rec = null, chunks = [];
+const mic = document.getElementById("mic");
+async function start() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  rec = new MediaRecorder(stream); chunks = [];
+  rec.ondataavailable = e => chunks.push(e.data);
+  rec.onstop = () => { stream.getTracks().forEach(t => t.stop()); post("/voice", new Blob(chunks, { type: rec.mimeType })); };
+  rec.start(); mic.classList.add("rec"); mic.textContent = "Recording… release to send";
+}
+function stop() { if (rec && rec.state === "recording") rec.stop(); mic.classList.remove("rec"); mic.textContent = "Hold to talk"; }
+mic.onpointerdown = () => start().catch(e => alert("Microphone: " + e.message));
+mic.onpointerup = stop; mic.onpointerleave = stop;
+</script>
+</body>
+</html>
