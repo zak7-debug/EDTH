@@ -490,6 +490,17 @@ class TuringRepo:
     def list_dispatches(self):
         return self._query_dispatches()
 
+    def divert_dispatch(self, request_id, new_request_id, ts=None):
+        with self._lock:
+            found = self._query_dispatches(f"WHERE x.request_id = {lit(request_id)}")
+            if not found:
+                return
+            self._write(self.g_logistics, [
+                f"MATCH (d:Drone)-[x:DISPATCHED_TO]->(r) WHERE x.request_id = {lit(request_id)} "
+                f"SET {sets('x', {'status': 'DIVERTED', 'diverted_ts': ts or time.time()})}",
+                f"MATCH (d:Drone) WHERE d.id = {lit(found[0].drone_id)} SET d.claimed_by = {lit(new_request_id)}",
+            ])
+
     def complete_dispatch(self, request_id, ts=None):
         with self._lock:
             found = self._query_dispatches(f"WHERE x.request_id = {lit(request_id)}")

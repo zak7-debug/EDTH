@@ -198,7 +198,7 @@ class Dispatch:
     route: list[tuple[float, float]]  # [(lat, lon), ...] from drone to recipient
     latency_ms: float  # event received -> dispatch decided
     ts: float
-    status: Literal["EN_ROUTE", "DELIVERED", "LOST"] = "EN_ROUTE"
+    status: Literal["EN_ROUTE", "DELIVERED", "LOST", "DIVERTED"] = "EN_ROUTE"
 
     def to_dict(self) -> dict:
         d = asdict(self)

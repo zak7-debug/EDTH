@@ -80,6 +80,7 @@ class FlightTracker:
         self.clock = clock
         self.stock = stock or StockKeeper(self.repo, clock=clock)  # HOOK: reloads come out of launch-site stock
         engine.stock = self.stock  # medic restocks can order a launch site restocked (dispatch.py)
+        engine.tracker = self  # a higher-ranked restock can take over a drone in the air (dispatch.py)
         self.flights: dict[str, _Flight] = {}  # drone_id -> flight
         # Each drone's standard loadout: its payload the first time it takes off. On landing it is
         # topped back up to this from its launch site's stock (stock.py), as far as the stock allows.
@@ -134,7 +135,7 @@ class FlightTracker:
                 out += self._arrived(f)
         for m in self.stock.step():  # restock shipments landing at launch sites
             out.append(m)
-            change = m["data"]["change"]
+            change = m["data"].get("change") if m["type"] == "stock_update" else None  # the outbox also carries dispatches
             if change and change["kind"] == "order_arrived":
                 out += self._restocked(change["depot_id"])
         return out

@@ -78,6 +78,10 @@ class GraphRepo(Protocol):
     def lose_drone(self, drone_id: str, request_id: Optional[str] = None, ts: Optional[float] = None) -> None:
         """Drone shot down / crashed: status LOST, payload written off, its dispatch (if any) marked LOST."""
         ...
+    def divert_dispatch(self, request_id: str, new_request_id: str, ts: Optional[float] = None) -> None:
+        """The drone on this dispatch was taken over by a higher-priority request (dispatch.py): mark the
+        dispatch DIVERTED and point the drone's claim at the new request. Its payload stays on board."""
+        ...
     def list_dispatches(self) -> list[Dispatch]: ...
 
     # casualty evacuation (evac.py)
@@ -225,6 +229,13 @@ class InMemoryRepo:
             d.payload = {k: 0 for k in d.payload}  # supplies on board are gone
             if request_id in self.dispatches:
                 self.dispatches[request_id].status = "LOST"
+
+    def divert_dispatch(self, request_id, new_request_id, ts=None):
+        with self._lock:
+            disp = self.dispatches.get(request_id)
+            if disp is not None:
+                disp.status = "DIVERTED"
+                self.drones[disp.drone_id].claimed_by = new_request_id
 
     def list_dispatches(self):
         return list(self.dispatches.values())
