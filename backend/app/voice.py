@@ -60,23 +60,23 @@ NUMBERS = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
     "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "nine": 9, "ten": 10,
 }
-CALLSIGN_STEMS = {"борсук": "BADGER", "badger": "BADGER"}  # DEMO: the seed's invented squad names
+CALLSIGN_STEMS = {"борсук": "BADGER", "барсук": "BADGER", "badger": "BADGER", "borsuk": "BADGER"}  # DEMO: the seed's invented squad names
 MEDIC_STEMS = ("медик", "лікар", "санінструктор", "medic", "doc")
 
 # Order matters: CRITICAL is checked first, so "важко поранений" (badly wounded) is CRITICAL.
 SEVERITY_STEMS = {
-    "CRITICAL": ("важк", "тяжк", "критичн", "масивн", "critical", "urgent", "severe", "massive"),
-    "WOUNDED": ("поранен", "легк", "трьохсот", "300", "wounded", "injured", "light"),
+    "CRITICAL": ("важк", "тяжк", "тяжел", "критич", "масивн", "critical", "urgent", "severe", "massive"),
+    "WOUNDED": ("поранен", "ранен", "легк", "трьохсот", "300", "wounded", "injured", "light"),
 }
 ITEM_STEMS = {
     "blood_oneg": ("кров", "плазм", "blood", "plasma"),
     "tourniquet": ("турнікет", "джгут", "tourniquet"),
     "chest_seal": ("оклюзійн", "наліпк", "seal"),
-    "hemostatic_gauze": ("гемостат", "gauze", "hemostatic"),
+    "hemostatic_gauze": ("гемостат", "бинт", "пов'язк", "gauze", "hemostatic", "bandage"),
     "morphine_autoinjector": ("морфін", "знебол", "morphine", "painkiller"),
 }
 NOT_ITEMS = ("кровотеч",)  # "кровотеча" is bleeding, not a request for blood
-NEED_STEMS = ("закінчу", "мало", "потріб", "треба", "бракує", "немає", "нема", "надішл", "need",
+NEED_STEMS = ("закінчу", "мало", "потріб", "треба", "нужн", "надо", "бракує", "немає", "нема", "надішл", "need",
               "low", "running", "out", "send", "short")
 
 # Spoken map reports (geo/, README_audio_geolocation.md): a sentence with one of these and a direction
@@ -144,6 +144,8 @@ def _callsigns(toks: list[str]) -> list[tuple[int, str]]:
             continue
         unit = _number(toks[i + 1])
         nxt = toks[i + 2] if i + 2 < len(toks) else ""
+        if re.fullmatch(r"[1-9]{2}", toks[i + 1]) and _number(nxt) is None:  # Whisper writes "Борсук 32" for три-два
+            unit, nxt = int(toks[i + 1][0]), toks[i + 1][1]
         if _number(nxt) is not None:
             found.append((i, f"{name} {unit}-{_number(nxt)}"))
         elif nxt.startswith(MEDIC_STEMS):
@@ -244,7 +246,8 @@ def _zone_events(sentences: list[str], speaker: Optional[str], callsign_ids: dic
 
 def parse_report(text: str, callsign_ids: dict[str, str],
                  position: Optional[tuple[float, float]] = None,
-                 drones: Optional[dict[str, tuple[str, tuple[float, float]]]] = None) -> ParsedReport:
+                 drones: Optional[dict[str, tuple[str, tuple[float, float]]]] = None,
+                 unhurt: Optional[list[str]] = None) -> ParsedReport:
     """Turn one radio report into partial events. callsign_ids maps "BADGER 2-4" -> "sol-10";
     drones maps "HAWK 1" -> ("drn-01", (lat, lon)); position is the reporter's device (a driver).
 
@@ -253,6 +256,8 @@ def parse_report(text: str, callsign_ids: dict[str, str],
     casualty; supplies asked for in the same sentence are a restock for that soldier's squad medic,
     because drones deliver to medics only. A sentence with supplies and a "need / running out" word is
     a low-stock request, with an urgency. A drone callsign with a loss word is a lost drone.
+    A casualty with no soldier named ("один поранений, важкий") is taken as the next unhurt soldier
+    of the speaker's squad (unhurt: callsigns of soldiers still OK), and the summary says so.
     """
     start = time.perf_counter()
     out = ParsedReport()
@@ -260,6 +265,8 @@ def parse_report(text: str, callsign_ids: dict[str, str],
     speaker: Optional[str] = None  # the medic's callsign
     named_drone: Optional[str] = None  # the drone a pilot named: zones are placed from it
     report_critical = False
+    unhurt = list(unhurt or [])
+    assumed: list[str] = []  # soldiers taken for an unnamed casualty
     sentences = [s for s in (s.strip() for s in re.split(r"[.!?;\n]+", text)) if s]
 
     def restock(medic: Optional[str], items: dict, urgency: Optional[str], sentence: str):
@@ -316,6 +323,24 @@ def parse_report(text: str, callsign_ids: dict[str, str],
                 if items and needs:  # the squad medic treats them, so the medic gets the supplies
                     restock(cs.rsplit("-", 1)[0] + "-DOC", items,
                             "CRITICAL" if severity == "CRITICAL" else urgency or "URGENT", sentence)
+        if severity and not soldiers and not any(t in DIST_UNITS for t in toks):
+            # "Один поранений, важкий": no soldier named, so the next unhurt soldier(s) of the speaker's squad
+            squad = (speaker or "").removesuffix("-DOC")
+            at = next(i for i, t in enumerate(sev_toks) if t.startswith(SEVERITY_STEMS["CRITICAL"] + SEVERITY_STEMS["WOUNDED"]))
+            count = next((_number(t) for t in reversed(sev_toks[max(0, at - 3):at]) if _number(t)), 1)
+            picks = [cs for cs in unhurt if squad and cs.startswith(f"{squad}-")][:min(count, 5)]
+            if not picks:
+                out.unparsed.append(f"casualty heard but not which soldier: say their callsign, e.g. «Борсук три-два, "
+                                    f"важкий» ({sentence})")
+            for cs in picks:
+                unhurt.remove(cs)
+                assumed.append(cs)
+                soldiers.append(cs)
+                out.events.append({"type": "CASUALTY", "subject_id": callsign_ids[cs], "severity": severity,
+                                   "callsign": cs})
+                report_critical = report_critical or severity == "CRITICAL"
+            if picks and items and needs:
+                restock(f"{squad}-DOC", items, "CRITICAL" if severity == "CRITICAL" else urgency or "URGENT", sentence)
         if items and needs and not soldiers:
             medic = next((cs for _, cs in calls if cs.endswith("-DOC")), speaker)
             restock(medic, items, urgency, sentence)
@@ -328,6 +353,8 @@ def parse_report(text: str, callsign_ids: dict[str, str],
     if not out.events and not out.unparsed:
         out.unparsed.append("no casualty, supply request, zone or lost drone heard")
     out.english = english_summary(out.events)
+    if assumed:
+        out.english += f" (soldier not named: taken as {', '.join(assumed)})"
     out.parse_ms = round((time.perf_counter() - start) * 1000, 2)
     return out
 
@@ -402,10 +429,24 @@ def decode_audio(audio: bytes):
     return np.concatenate(chunks).astype(np.float32) / 32768.0
 
 
+SPOKEN = ("uk", "en")  # the languages the parser reads
+# Whisper spells unusual words better when it has seen them: the callsigns and kit names, no full report.
+PROMPT = {"uk": "Борсук, Яструб, Сокіл, Сова. Медик, водій, пілот. Турнікети, гемостатики, кров.",
+          "en": "Badger, Hawk, Falcon, Owl. Medic, driver, pilot. Tourniquets, gauze, blood."}
+
+
 def transcribe(audio: bytes, language: Optional[str] = None) -> tuple[str, str]:
-    """(transcript, detected language). Raises if faster-whisper or its model is unavailable."""
-    segments, info = _whisper().transcribe(decode_audio(audio), language=language, beam_size=1,
-                                           vad_filter=False, condition_on_previous_text=False)
+    """(transcript, detected language). Raises if faster-whisper or its model is unavailable.
+    With no language given, Whisper detects it, but a short Ukrainian call is often heard as Russian,
+    which the parser can't read: anything other than uk / en is redone as the likelier of the two.
+    Segments are lazy, so the first pass only costs the detection."""
+    model, pcm = _whisper(), decode_audio(audio)
+    opts = dict(beam_size=1, vad_filter=False, condition_on_previous_text=False)
+    if language not in SPOKEN:
+        _, info = model.transcribe(pcm, language=None, **opts)
+        probs = dict(getattr(info, "all_language_probs", None) or [])
+        language = info.language if info.language in SPOKEN else max(SPOKEN, key=lambda l: probs.get(l, 0.0))
+    segments, info = model.transcribe(pcm, language=language, initial_prompt=PROMPT[language], **opts)
     return " ".join(s.text.strip() for s in segments).strip(), info.language
 
 
@@ -435,7 +476,9 @@ async def handle_transcript(text: str, language: Optional[str], stt: str, stt_ms
         cs = next((c for c, (i, _) in drones.items() if i == f.drone_id), None)
         if cs:
             drones[cs] = (f.drone_id, f.position())
-    parsed = parse_report(f"{speaker}. {text}" if speaker else text, callsign_ids, position, drones)
+    unhurt = sorted(p.callsign for p in world.repo.list_personnel()
+                    if p.status == "OK" and re.search(r"-\d+$", p.callsign or ""))
+    parsed = parse_report(f"{speaker}. {text}" if speaker else text, callsign_ids, position, drones, unhurt)
     report_id = f"voice-{int(time.time())}-{next(_ids)}"
     for k, ev in enumerate(parsed.events, start=1):
         ev["event_id"] = f"{report_id}-{k}"  # becomes the dispatch's request_id

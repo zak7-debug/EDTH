@@ -158,3 +158,37 @@ def test_pilot_reports(monkeypatch):
         asked = client.post("/voice?clip=badger1-eta-uk", content=b"").json()
         assert asked["results"][0]["drone_id"] == drone and asked["results"][0]["eta_s"] > 0
         assert "прибуде приблизно через" in asked["readback"]["uk"]
+
+
+def test_free_speech_as_whisper_writes_it():
+    ids = _ids()
+    unhurt = sorted(cs for cs in ids if cs.startswith("BADGER") and not cs.endswith("-DOC"))
+    # no soldier named: the next unhurt soldiers of the speaker's squad, and the summary says so
+    r = parse_report("Борсук-3, медик. Двоє... Два поранені, важкий стан.", ids, unhurt=unhurt)
+    assert [e["callsign"] for e in r.events] == ["BADGER 3-1", "BADGER 3-2"]
+    assert "soldier not named" in r.english
+    assert parse_report("Один поранений, критичний.", ids).unparsed[0].startswith("casualty heard but not which")
+    # digits run together, Russian spellings and plain English kit names
+    assert parse_report("Борсук 32 важкий", ids).events[0]["callsign"] == "BADGER 3-2"
+    assert parse_report("Барсук три-два, тяжелый.", ids).events[0]["severity"] == "CRITICAL"
+    ev = parse_report("Badger one, medic. I need more bandages.", ids).events[0]
+    assert ev["subject_id"] == "med-1" and ev["items"] == {"hemostatic_gauze": 1}
+
+
+def test_transcribe_redoes_other_languages_as_ukrainian(monkeypatch):
+    from types import SimpleNamespace
+
+    from backend.app import voice
+    calls = []
+
+    class Model:
+        def transcribe(self, pcm, language=None, initial_prompt=None, **_):
+            calls.append(language)
+            info = SimpleNamespace(language=language or "ru", all_language_probs=[("ru", .6), ("uk", .3), ("en", .1)])
+            return iter([SimpleNamespace(text=" Борсук один ")]), info
+
+    monkeypatch.setattr(voice, "_whisper", lambda: Model())
+    monkeypatch.setattr(voice, "decode_audio", lambda audio: audio)
+    assert voice.transcribe(b"x") == ("Борсук один", "uk") and calls == [None, "uk"]
+    calls.clear()
+    assert voice.transcribe(b"x", "en")[1] == "en" and calls == ["en"]
