@@ -155,3 +155,115 @@ def test_casualty_waits_for_the_medics_drone_not_their_own(repo):
     assert u["phase"] == "WAITING_FOR_DRONE" and not u["treated"]
     other = evac.start(repo.get_person("sol-03"), "CRITICAL")  # BADGER 1: no drone coming, treated at once
     assert "in 10 min" in other[0]["data"]["note"]
+
+
+# ---- a higher-ranked medic takes over a drone already flying ----------------------------------------
+
+def _fly(engine, flights, ev):
+    d = engine.handle(ev)
+    assert isinstance(d, Dispatch)
+    engine.record(d, ev)
+    flights.start(d)
+    return d
+
+
+def test_critical_restock_takes_over_a_drone_flying_to_a_non_urgent_medic(repo):
+    clock, engine, flights, evac = world(repo)
+    low = event(repo, "med-1", "LOW_STOCK", items={"blood_oneg": 2}, urgency="NON_URGENT")
+    first = _fly(engine, flights, low)
+    flights.step(5)  # in the air
+    for d in repo.list_drones():  # nothing else free
+        if d.status == "IDLE" and not d.claimed_by:
+            repo.claim_drone(d.id, "busy")
+    r = engine.handle(event(repo, "med-2", "LOW_STOCK", items={"blood_oneg": 2}, urgency="CRITICAL"))
+    assert isinstance(r, Dispatch) and r.drone_id == first.drone_id and r.items == {"blood_oneg": 2}
+    assert repo.get_drone(r.drone_id).claimed_by == r.request_id
+    assert next(x for x in repo.list_dispatches() if x.request_id == low.event_id).status == "DIVERTED"
+    out = flights.stock.step()
+    assert any(m["data"]["change"] and m["data"]["change"]["kind"] == "diverted" for m in out)
+    assert any(q.event_id.startswith(low.event_id) for q in engine.pending())  # BADGER 1 still served
+    engine.record(r)
+    flights.start(r)
+    for _ in range(200):
+        flights.step(5)
+    assert next(x for x in repo.list_dispatches() if x.request_id == r.request_id).status == "DELIVERED"
+
+
+def test_take_over_sends_a_second_drone_for_what_the_first_lacks(repo):
+    clock, engine, flights, evac = world(repo)
+    repo.update_drone("drn-08", payload={"morphine_autoinjector": 0})
+    low = event(repo, "med-1", "LOW_STOCK", items={"morphine_autoinjector": 1}, urgency="NON_URGENT")
+    first = _fly(engine, flights, low)
+    flights.step(5)
+    r = engine.handle(event(repo, "med-2", "LOW_STOCK", items={"morphine_autoinjector": 2}, urgency="CRITICAL"))
+    assert isinstance(r, Dispatch) and r.drone_id == first.drone_id and r.items == {"morphine_autoinjector": 1}
+    sent = [m["data"] for m in flights.step(0.1) if m["type"] == "dispatch"]  # broadcast on the next tick
+    top = [d for d in sent if d["recipient_id"] == "med-2"]
+    assert top and top[0]["items"] == {"morphine_autoinjector": 1} and top[0]["drone_id"] != r.drone_id
+
+
+def test_equal_or_lower_rank_never_takes_over(repo):
+    clock, engine, flights, evac = world(repo)
+    first = _fly(engine, flights, event(repo, "med-1", "LOW_STOCK", items={"blood_oneg": 2}, urgency="URGENT"))
+    flights.step(5)
+    for d in repo.list_drones():
+        if d.status == "IDLE" and not d.claimed_by:
+            repo.claim_drone(d.id, "busy")
+    r = engine.handle(event(repo, "med-2", "LOW_STOCK", items={"blood_oneg": 2}, urgency="URGENT"))
+    assert not (isinstance(r, Dispatch) and r.drone_id == first.drone_id)
+
+
+# ---- real roads (scripts/fetch_roads.py -> roads.json) ----------------------------------------------
+
+def _fake_osm():
+    """An Overpass-shaped answer: a curvy road every 0.05 deg each way across the sector, with
+    shape points every ~300 m, sharing nodes where they cross."""
+    from backend.app.roads import BBOX
+    s, w, n, e = BBOX
+    els, ids, ways = [], {}, []
+
+    def node(lat, lon):
+        k = (round(lat, 6), round(lon, 6))
+        if k not in ids:
+            ids[k] = len(ids) + 1
+            els.append({"type": "node", "id": ids[k], "lat": k[0], "lon": k[1]})
+        return ids[k]
+
+    import math as m
+    lats = [s + 0.05 * i for i in range(int((n - s) / 0.05) + 1)]
+    lons = [w + 0.05 * j for j in range(int((e - w) / 0.05) + 1)]
+    for i, lat in enumerate(lats):  # east-west, wiggling between the crossings
+        pts = [node(lat + (0.004 * m.sin(k / 3) if k % 15 else 0), lon) for k, lon in
+               enumerate(w + 0.05 * x / 15 for x in range(15 * (len(lons) - 1) + 1))]
+        ways.append({"type": "way", "id": 10_000 + i, "nodes": pts, "tags": {"highway": "secondary"}})
+    for j, lon in enumerate(lons):
+        pts = [node(s + 0.05 * y / 15, lon) for y in range(15 * (len(lats) - 1) + 1)]
+        ways.append({"type": "way", "id": 20_000 + j, "nodes": pts, "tags": {"highway": "tertiary"}})
+    ways.append({"type": "way", "id": 30_000, "nodes": [node(48.6, 36.5), node(48.7, 36.6)],
+                 "tags": {"highway": "primary"}})  # an island: dropped
+    ways.append({"type": "way", "id": 30_001, "nodes": pts[:2], "tags": {"highway": "footway"}})  # not a road
+    return {"elements": els + ways}
+
+
+def test_real_roads_compile_and_route_round_zones(repo, tmp_path, monkeypatch):
+    import json
+    from backend.app import roads
+    data = roads.compile_osm(_fake_osm())
+    assert len(data["ways"]) == len(_fake_osm()["elements"]) - sum(1 for e in _fake_osm()["elements"]
+                                                                   if e["type"] == "node") - 2
+    f = tmp_path / "roads.json"
+    f.write_text(json.dumps(data))
+    monkeypatch.setenv("EDTH_ROADS_FILE", str(f))
+    zones = repo.list_no_fly_zones()
+    net = roads.net_for(zones)
+    assert isinstance(net, roads.RealRoadNet)
+    a, b = (47.622, 35.602), (47.76, 35.42)
+    pts, metres, secs = net.route(a, b)
+    on_road = {tuple(p) for p in data["nodes"]}
+    assert len(pts) > 10 and all(tuple(p) in on_road for p in pts[1:-1])  # every waypoint is on a road
+    router = Router(zones)
+    assert all(router.clear(pts[i], pts[i + 1]) for i in range(len(pts) - 1))
+    legs = chain_status(repo)["road_legs"]
+    assert all(tuple(p) in {(round(x, 5), round(y, 5)) for x, y in on_road} for p in legs["dc-02>dep-02"][1:-1])
+    monkeypatch.setenv("EDTH_ROADS", "grid")  # the invented lattice is still there as a fallback
+    assert isinstance(roads.net_for(zones), roads.RoadNet)

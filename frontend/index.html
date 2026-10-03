@@ -601,6 +601,8 @@ const handlers = {
   },
   dispatch(d) {
     const dr = S.drones[d.drone_id];
+    const prev = eta[d.drone_id];  // taken over in the air by a higher-ranked medic: drop the old route
+    if (prev && prev.req && prev.req !== d.request_id) clearRoute(prev.req);
     drawRoute(d.request_id, d.route);
     eta[d.drone_id] = { eta: d.eta_s, at: performance.now(), rate: 1, req: d.request_id };
     mission[d.drone_id] = { to: d.recipient_id, items: d.items };
@@ -747,6 +749,7 @@ const handlers = {
       const k = x.change.kind;
       const bad = k === 'order_lost' || k === 'order_failed' || (k === 'reload' && Object.keys(x.change.short || {}).length);
       log(esc(x.change.note), bad ? 'nod' : k === 'treated' ? 'evac' : 'stock');
+      if (k === 'diverted') showAlert(`<b>${esc(x.change.note)}</b>`);
     }
   },
   evacuation(e) {

@@ -5,10 +5,13 @@ How it fits the product:
 - A casualty is driven to hospital by road, not cross-country: `RoadNet.route(a, b)` returns the
   waypoints, metres and seconds of the fastest drive, so the map shows the ambulance turning along
   roads and tracks, and the ETA is a driving time.
-- The network is generic and invented on purpose: farmland here is laid out in big rectangular fields
-  with a track along most field edges, so the sector gets a lattice of field tracks every TRACK_M,
-  with every ROAD_EVERY-th line a paved road. It is NOT traced from real roads: the map must never show
-  anything that reads like a real front-line casualty or supply route (see seed.py).
+- Real public roads when they have been downloaded: `python scripts/fetch_roads.py` (run once, online)
+  saves the OpenStreetMap roads under the map's road overlay to backend/data/roads.json, and
+  `RealRoadNet` drives on them, so trucks and ambulances follow the roads the overlay draws. These are
+  ordinary public roads; the sites, units and routes between them stay invented (see seed.py).
+- Without that file (or with EDTH_ROADS=grid) the network is generic and invented: farmland here is
+  laid out in big rectangular fields with a track along most field edges, so the sector gets a lattice
+  of field tracks every TRACK_M, with every ROAD_EVERY-th line a paved road.
 - Segments that cross a threat zone are closed, so routes go round zones along other roads. Getting
   on and off the network (from a squad's position, into a hospital) is a short cross-country leg.
 
@@ -17,7 +20,10 @@ Searchable tags: TUNE (numbers to adjust), HOOK (integration points).
 from __future__ import annotations
 
 import heapq
+import json
 import math
+import os
+from pathlib import Path
 from typing import Iterable, Optional
 
 from .models import NoFlyZone
@@ -32,6 +38,12 @@ ROAD_EVERY = 4  # every 4th line is a paved road (8 km apart)
 JITTER_M = 250  # nudge each junction so the lattice doesn't look ruled
 ROAD_KMH, TRACK_KMH, OFFROAD_KMH = 50.0, 25.0, 10.0  # military ambulance or truck, loaded
 ENTRY_NODES = 4  # join the network at the corners of the cell you are in
+
+# HOOK: written by scripts/fetch_roads.py. TUNE: driving speeds per OpenStreetMap road class.
+ROADS_FILE = Path(__file__).resolve().parents[1] / "data" / "roads.json"
+KIND_KMH = {"motorway": 80.0, "trunk": 70.0, "primary": 60.0, "secondary": 50.0, "tertiary": 40.0,
+            "unclassified": 30.0, "track": TRACK_KMH}
+ENTRY_SEARCH_M = 6_000  # how far from a road a site or squad may be and still drive off it
 
 
 def _jitter(i: int, j: int) -> tuple[float, float]:
@@ -90,64 +102,237 @@ class RoadNet:
         return sorted(out, key=lambda e: e[2])[:ENTRY_NODES]
 
     def route(self, a: Point, b: Point) -> tuple[list[Point], float, float]:
-        """Fastest drive from a to b: (waypoints, metres, seconds). Falls back to cross-country round
-        the zones (at off-road speed) when either end is outside the network or nothing connects."""
-        direct_m = haversine_m(a, b)
-        best_direct = None
-        if self.router.clear(a, b):  # very short hops: just drive across
-            best_direct = ([a, b], direct_m, direct_m / (OFFROAD_KMH / 3.6))
-        if not (self.covers(a) and self.covers(b)):
-            return best_direct or self._offroad(a, b)
-        starts, ends = self._entries(a), {k: (m, sec) for k, m, sec in self._entries(b)}
-        if not starts or not ends:
-            return best_direct or self._offroad(a, b)
-        best = {k: sec for k, m, sec in starts}
-        dist = {k: m for k, m, sec in starts}
-        prev: dict = {}
-        heap = [(sec, k) for k, m, sec in starts]
-        heapq.heapify(heap)
-        goal, goal_t = None, best_direct[2] if best_direct else float("inf")
-        while heap:
-            t, k = heapq.heappop(heap)
-            if t >= goal_t:
-                break
-            if t > best.get(k, float("inf")):
-                continue
-            if k in ends and t + ends[k][1] < goal_t:
-                goal, goal_t = k, t + ends[k][1]
-            for nk, m, sec in self.adj[k]:
-                nt = t + sec
-                if nt < best.get(nk, float("inf")):
-                    best[nk], dist[nk], prev[nk] = nt, dist[k] + m, k
-                    heapq.heappush(heap, (nt, nk))
-        if goal is None:
-            return best_direct or self._offroad(a, b)
-        path, k = [goal], goal
-        while k in prev:
-            k = prev[k]
-            path.append(k)
-        pts = [a] + [self.nodes[k] for k in reversed(path)] + [b]
-        return pts, dist[goal] + ends[goal][0], goal_t
+        """Fastest drive from a to b: (waypoints, metres, seconds). See _dijkstra."""
+        return _dijkstra(self, a, b, lambda k: self.nodes[k])
 
     def _offroad(self, a: Point, b: Point) -> tuple[list[Point], float, float]:
         pts, m = self.router.route(a, b)
         return [tuple(p) for p in pts], m, m / (OFFROAD_KMH / 3.6)
 
 
+# ---- real roads (scripts/fetch_roads.py) ------------------------------------------------------------
+
+def _simplify(pts: list[Point], keep: set[int], tol_m: float) -> list[int]:
+    """Indexes of `pts` to keep: Douglas-Peucker at tol_m, never dropping an index in `keep`."""
+    out, cut = [0], sorted({0, len(pts) - 1} | keep)
+    lat0 = math.radians(pts[0][0])
+
+    def off(p, a, b):  # metres from p to the line a-b (flat earth: fine at road scale)
+        ax, ay = a[1] * 111_320 * math.cos(lat0), a[0] * 110_540
+        bx, by = b[1] * 111_320 * math.cos(lat0), b[0] * 110_540
+        px, py = p[1] * 111_320 * math.cos(lat0), p[0] * 110_540
+        dx, dy = bx - ax, by - ay
+        if dx == dy == 0:
+            return math.hypot(px - ax, py - ay)
+        t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+        return math.hypot(px - ax - t * dx, py - ay - t * dy)
+
+    def dp(i, j):
+        best, k = 0.0, None
+        for m in range(i + 1, j):
+            d = off(pts[m], pts[i], pts[j])
+            if d > best:
+                best, k = d, m
+        if k is not None and best > tol_m:
+            dp(i, k)
+            out.append(k)
+            dp(k, j)
+
+    for i, j in zip(cut, cut[1:]):
+        dp(i, j)
+        out.append(j)
+    return sorted(set(out))
+
+
+def compile_osm(osm: dict, tol_m: float = 15.0) -> dict:
+    """Overpass JSON (ways with highway tags, plus their nodes) -> the compact roads.json:
+    {"nodes": [[lat, lon], ...], "ways": [[kind, [node index, ...]], ...]}. Junctions are kept exactly,
+    the bends between them simplified to tol_m, and only the largest connected network is kept."""
+    coords = {e["id"]: (e["lat"], e["lon"]) for e in osm["elements"] if e["type"] == "node"}
+    ways = []
+    for e in osm["elements"]:
+        if e["type"] != "way":
+            continue
+        kind = e.get("tags", {}).get("highway", "").replace("_link", "")
+        ids = [n for n in e.get("nodes", []) if n in coords]
+        if kind in KIND_KMH and len(ids) >= 2:
+            ways.append((kind, ids))
+    uses: dict[int, int] = {}  # > 1: a junction (on two ways) or a way's end, kept exactly
+    for _, ids in ways:
+        for n in set(ids):
+            uses[n] = uses.get(n, 0) + 1
+        uses[ids[0]] += 1
+        uses[ids[-1]] += 1
+    kept = []
+    for kind, ids in ways:
+        junctions = {i for i, n in enumerate(ids) if uses[n] > 1}
+        kept.append((kind, [ids[i] for i in _simplify([coords[n] for n in ids], junctions, tol_m)]))
+    # Largest connected network only: islands would trap a route start.
+    parent: dict[int, int] = {}
+
+    def find(x):
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for _, ids in kept:
+        for n in ids[1:]:
+            parent[find(n)] = find(ids[0])
+    sizes: dict[int, int] = {}
+    for _, ids in kept:
+        r = find(ids[0])
+        sizes[r] = sizes.get(r, 0) + len(ids)
+    main = max(sizes, key=sizes.get) if sizes else None
+    index: dict[int, int] = {}
+    nodes, out = [], []
+    for kind, ids in kept:
+        if find(ids[0]) != main:
+            continue
+        for n in ids:
+            if n not in index:
+                index[n] = len(nodes)
+                nodes.append([round(coords[n][0], 5), round(coords[n][1], 5)])
+        out.append([kind, [index[n] for n in ids]])
+    return {"source": "OpenStreetMap contributors (ODbL)", "nodes": nodes, "ways": out}
+
+
+class RealRoadNet:
+    """Same interface as RoadNet (route, covers), on the roads in roads.json."""
+
+    CELL = 0.02  # degrees: spatial index cell for finding the roads near a point
+
+    def __init__(self, data: dict, zones: Iterable[NoFlyZone] = ()):
+        self.zones = list(zones)
+        self.router = Router(self.zones)
+        self.nodes: list[Point] = [tuple(p) for p in data["nodes"]]
+        lats, lons = [p[0] for p in self.nodes], [p[1] for p in self.nodes]
+        pad = 0.05
+        self.bbox = (min(lats) - pad, min(lons) - pad, max(lats) + pad, max(lons) + pad)
+        boxes = []  # threat zones' lat/lon boxes: only segments touching one need the full check
+        for z in self.zones:
+            zl, zo = [p[0] for p in z.polygon], [p[1] for p in z.polygon]
+            boxes.append((min(zl), min(zo), max(zl), max(zo)))
+        self.adj: list[list[tuple[int, float, float]]] = [[] for _ in self.nodes]
+        for kind, ids in data["ways"]:
+            mps = KIND_KMH.get(kind, TRACK_KMH) / 3.6
+            for a, b in zip(ids, ids[1:]):
+                p, q = self.nodes[a], self.nodes[b]
+                if any(min(p[0], q[0]) <= n and max(p[0], q[0]) >= s and min(p[1], q[1]) <= e
+                       and max(p[1], q[1]) >= w for s, w, n, e in boxes) and not self.router.clear(p, q):
+                    continue
+                m = haversine_m(p, q)
+                self.adj[a].append((b, m, m / mps))
+                self.adj[b].append((a, m, m / mps))
+        self.grid: dict[tuple[int, int], list[int]] = {}
+        for i, p in enumerate(self.nodes):
+            if self.adj[i]:
+                self.grid.setdefault((int(p[0] / self.CELL), int(p[1] / self.CELL)), []).append(i)
+
+    def covers(self, p: Point) -> bool:
+        s, w, n, e = self.bbox
+        return s <= p[0] <= n and w <= p[1] <= e
+
+    def _entries(self, p: Point) -> list[tuple[int, float, float]]:
+        """The nearest road points round `p` reachable cross-country without crossing a zone."""
+        ci, cj = int(p[0] / self.CELL), int(p[1] / self.CELL)
+        reach = int(ENTRY_SEARCH_M / (self.CELL * 75_000)) + 1
+        near = []
+        for r in range(reach + 1):  # widen ring by ring until something is found
+            for di in range(-r, r + 1):
+                for dj in range(-r, r + 1):
+                    if max(abs(di), abs(dj)) == r:
+                        near += [(haversine_m(p, self.nodes[i]), i) for i in self.grid.get((ci + di, cj + dj), ())]
+            if len(near) >= ENTRY_NODES * 3:
+                break
+        out = []
+        for m, i in sorted(near)[:ENTRY_NODES * 6]:
+            if m <= ENTRY_SEARCH_M and self.router.clear(p, self.nodes[i]):
+                out.append((i, m, m / (OFFROAD_KMH / 3.6)))
+                if len(out) == ENTRY_NODES:
+                    break
+        return out
+
+    def route(self, a: Point, b: Point) -> tuple[list[Point], float, float]:
+        return _dijkstra(self, a, b, lambda k: self.nodes[k])
+
+    def _offroad(self, a: Point, b: Point) -> tuple[list[Point], float, float]:
+        pts, m = self.router.route(a, b)
+        return [tuple(p) for p in pts], m, m / (OFFROAD_KMH / 3.6)
+
+
+def _dijkstra(net, a: Point, b: Point, point_of) -> tuple[list[Point], float, float]:
+    """Fastest drive from a to b on `net` (RoadNet or RealRoadNet): (waypoints, metres, seconds).
+    Falls back to cross-country round the zones (at off-road speed) when either end is outside the
+    network or nothing connects."""
+    direct_m = haversine_m(a, b)
+    best_direct = None
+    if net.router.clear(a, b):  # very short hops: just drive across
+        best_direct = ([a, b], direct_m, direct_m / (OFFROAD_KMH / 3.6))
+    if not (net.covers(a) and net.covers(b)):
+        return best_direct or net._offroad(a, b)
+    starts, ends = net._entries(a), {k: (m, sec) for k, m, sec in net._entries(b)}
+    if not starts or not ends:
+        return best_direct or net._offroad(a, b)
+    best = {k: sec for k, m, sec in starts}
+    dist = {k: m for k, m, sec in starts}
+    prev: dict = {}
+    heap = [(sec, k) for k, m, sec in starts]
+    heapq.heapify(heap)
+    goal, goal_t = None, best_direct[2] if best_direct else float("inf")
+    while heap:
+        t, k = heapq.heappop(heap)
+        if t >= goal_t:
+            break
+        if t > best.get(k, float("inf")):
+            continue
+        if k in ends and t + ends[k][1] < goal_t:
+            goal, goal_t = k, t + ends[k][1]
+        for nk, m, sec in net.adj[k]:
+            nt = t + sec
+            if nt < best.get(nk, float("inf")):
+                best[nk], dist[nk], prev[nk] = nt, dist[k] + m, k
+                heapq.heappush(heap, (nt, nk))
+    if goal is None:
+        return best_direct or net._offroad(a, b)
+    path, k = [goal], goal
+    while k in prev:
+        k = prev[k]
+        path.append(k)
+    pts = [a] + [point_of(k) for k in reversed(path)] + [b]
+    return pts, dist[goal] + ends[goal][0], goal_t
+
+
+_road_data: dict = {}
+
+
+def real_roads() -> Optional[dict]:
+    """roads.json, loaded once, or None when it hasn't been downloaded (or EDTH_ROADS=grid)."""
+    if os.environ.get("EDTH_ROADS", "").lower() == "grid":
+        return None
+    path = Path(os.environ.get("EDTH_ROADS_FILE", ROADS_FILE))
+    key = (str(path), path.stat().st_mtime if path.exists() else None)
+    if key not in _road_data:
+        _road_data.clear()
+        _road_data[key] = json.loads(path.read_text()) if key[1] is not None else None
+    return _road_data[key]
+
 
 # ---- road geometry for the map's truck legs ---------------------------------------------------------
 
-_nets: dict[tuple, RoadNet] = {}
+_nets: dict[tuple, "RoadNet | RealRoadNet"] = {}
 _legs: dict[tuple, list[list[float]]] = {}
 
 
-def net_for(zones: list[NoFlyZone]) -> RoadNet:
-    """One RoadNet per set of threat zones (built once, ~50 ms)."""
-    key = tuple(sorted((z.id, tuple(map(tuple, z.polygon))) for z in zones))
+def net_for(zones: list[NoFlyZone]):
+    """One road network per set of threat zones (built once): the real roads if downloaded, else the
+    invented lattice."""
+    data = real_roads()
+    key = (id(data), tuple(sorted((z.id, tuple(map(tuple, z.polygon))) for z in zones)))
     if key not in _nets:
         _nets.clear()  # zones only ever grow during a run: keep just the current network
         _legs.clear()
-        _nets[key] = RoadNet(zones)
+        _nets[key] = RealRoadNet(data, zones) if data else RoadNet(zones)
     return _nets[key]
 
 

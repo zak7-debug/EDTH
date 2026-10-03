@@ -13,6 +13,10 @@ How it fits the product:
   coming home, unless none carries the items at all. If no launch site holds the items, a restock
   shipment is ordered to the launch site that can serve the medic soonest (or one already on its way
   is used), the request waits in the queue, and the medic is told the ETA. It flies when it lands.
+- Restocks are ranked (models.RESTOCK_PRIORITY). When no free drone carries what a medic needs, a drone
+  already in the air to a LOWER-ranked medic that carries some of it is diverted to them at once
+  (`_take_over`). If it doesn't carry everything, a second drone is sent with the rest; the
+  lower-ranked medic's restock goes out again (keeping its place in the queue by its original time).
 - Routing is pluggable: `route_fn(a, b) -> (points, metres)`. The default is routing.Router, an A*
   around the graph's no-fly / threat zones; pass `route_fn=straight_line` to switch it off.
 
@@ -60,6 +64,8 @@ RANGE_SAFETY = 1.2
 RELOAD_S = 120.0
 # TUNE: restock urgencies that get a drone loaded to order instead of waiting for one coming home.
 LOAD_TO_ORDER = ("CRITICAL", "URGENT")
+# TUNE: a higher-ranked restock may take over a drone in the air to a lower-ranked medic.
+TAKE_OVER = True
 
 
 def haversine_m(a: Point, b: Point) -> float:
@@ -120,6 +126,7 @@ class DispatchEngine:
         self._events: dict[str, Event] = {}  # request_id -> event, for retries after a drone is lost
         self._retries = itertools.count(1)
         self.stock = None  # HOOK: the StockKeeper (flights.FlightTracker sets it), for restocking launch sites
+        self.tracker = None  # HOOK: the FlightTracker (it sets itself), to divert drones in the air
         self._awaiting: dict[str, dict] = {}  # request_id -> restock shipment it waits for (order_id, eta)
 
     # ---------------------------------------------------------------------------------------
@@ -308,6 +315,10 @@ class DispatchEngine:
     def _restock(self, event: Event, items: dict[str, int], first: NoDispatch, t0: float) -> Union[Dispatch, NoDispatch]:
         """No free drone carries the items. Load one to order, or wait for one, or restock a launch site."""
         urgency = event.urgency or "NON_URGENT"
+        if TAKE_OVER:
+            taken = self._take_over(event, items, t0)
+            if taken:
+                return taken
         if urgency in LOAD_TO_ORDER or first.reason_code != "ALL_BUSY":
             loaded = self._load_to_order(event, items, t0)
             if loaded:
@@ -333,6 +344,75 @@ class DispatchEngine:
             nearest_alternative={"drone_id": None, "eta_s": plan["eta_s"], "via_depot": plan["depot_id"],
                                  "order_id": plan["order_id"], "note": plan["note"]},
             latency_ms=round((time.perf_counter() - t0) * 1000, 2))
+
+    def _take_over(self, event: Event, items: dict[str, int], t0: float) -> Optional[Dispatch]:
+        """Divert a drone in the air to a lower-ranked medic, carrying some of `items`, to this medic.
+        Prefers the drone that covers the most, then the soonest. Side effects (broadcast through the
+        StockKeeper outbox): the lower-ranked restock goes out again, and a top-up for anything missing."""
+        if self.tracker is None:
+            return None
+        target, best = (event.lat, event.lon), None
+        for f in self.tracker.flights.values():
+            old = self._events.get(f.request_id)
+            if f.phase != "EN_ROUTE" or f.dispatch is None or old is None or old.type != "LOW_STOCK" \
+                    or old.priority <= event.priority or old.subject_id == event.subject_id:
+                continue
+            drone = self.repo.get_drone(f.drone_id)
+            if drone.claimed_by != f.request_id:  # already taken over in this decision
+                continue
+            give = {i: min(q, drone.payload.get(i, 0)) for i, q in items.items()}
+            give = {i: q for i, q in give.items() if q > 0}
+            if not give:
+                continue
+            here = f.position()
+            route, dist = self.route_fn(here, target)
+            back = min(haversine_m(target, (d.lat, d.lon)) for d in self._depots)
+            if (dist + back) * RANGE_SAFETY > drone.range_m - f.flown_m:
+                continue
+            key = (-sum(give.values()), dist / drone.speed_mps)
+            if best is None or key < best[0]:
+                best = (key, f, drone, give, route, dist, old)
+        if best is None:
+            return None
+        _, f, drone, give, route, dist, old = best
+        self.repo.divert_dispatch(f.request_id, event.event_id, self.clock())
+        here = f.position()  # the new flight starts from here, so book the battery already used
+        self.repo.update_drone(drone.id, lat=here[0], lon=here[1], range_m=max(0.0, drone.range_m - f.flown_m))
+        taken = Dispatch(request_id=event.event_id, drone_id=drone.id, recipient_id=event.subject_id, items=give,
+                         eta_s=round(dist / drone.speed_mps, 1), distance_m=round(dist, 1), route=route,
+                         latency_ms=round((time.perf_counter() - t0) * 1000, 2), ts=self.clock())
+        # The lower-ranked medic's restock goes out again with its original time, so it keeps its place.
+        retry = replace(old, event_id=f"{old.event_id.split('-d')[0]}-d{next(self._retries)}")
+        missing = {i: q - give.get(i, 0) for i, q in items.items() if q > give.get(i, 0)}
+        side = []
+        names = {p.id: p.callsign for p in self.repo.list_personnel()}
+        note = (f"{drone.callsign} diverted from {names.get(old.subject_id, old.subject_id)} "
+                f"({(old.urgency or 'NON_URGENT').lower().replace('_', '-')}) to {names.get(event.subject_id, event.subject_id)} "
+                f"({(event.urgency or 'NON_URGENT').lower().replace('_', '-')}) with {_fmt(give)}")
+        if missing:
+            top = replace(event, event_id=f"{event.event_id}-top", items=missing)
+            side.append(self.handle(top, time.perf_counter()))
+            note += f"; a second drone brings {_fmt(missing)}"
+        side.append(self.handle(retry, time.perf_counter()))
+        note += f". {names.get(old.subject_id, old.subject_id)}'s restock goes out again"
+        self._side_effects(side, note, drone.id)
+        return taken
+
+    def _side_effects(self, results: list, note: str, drone_id: str) -> None:
+        """Start, record and announce decisions made inside another one (a take-over's retry and top-up)."""
+        from .messages import dispatch_msg, no_dispatch_msg, queue_msg  # late import: messages imports repo
+        if self.stock is None:
+            return
+        out = [self.stock.message("diverted", note, drone_id=drone_id)]
+        for r in results:
+            if isinstance(r, Dispatch):
+                self.record(r)
+                self.tracker.start(r)
+                out.append(dispatch_msg(r))
+            elif r is not None:
+                out.append(no_dispatch_msg(r))
+        out.append(queue_msg(self.pending()))
+        self.stock.outbox += out
 
     def _load_to_order(self, event: Event, items: dict[str, int], t0: float) -> Optional[Dispatch]:
         """An idle drone at a launch site that holds the items is loaded with them and sent (fastest first).
