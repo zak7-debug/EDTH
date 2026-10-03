@@ -440,6 +440,7 @@ def decode_audio(audio: bytes):
 
 
 SPOKEN = ("uk", "en")  # the languages the parser reads
+EN_SURE = 0.8  # TUNE: how sure Whisper must be that a call is English before it is not read as Ukrainian
 # Whisper spells unusual words better when it has seen them: the callsigns and kit names, no full report.
 PROMPT = {"uk": "Борсук, Яструб, Сокіл, Сова. Медик, водій, пілот. Турнікети, гемостатики, кров.",
           "en": "Badger, Hawk, Falcon, Owl. Medic, driver, pilot. Tourniquets, gauze, blood."}
@@ -447,15 +448,17 @@ PROMPT = {"uk": "Борсук, Яструб, Сокіл, Сова. Медик, �
 
 def transcribe(audio: bytes, language: Optional[str] = None) -> tuple[str, str]:
     """(transcript, detected language). Raises if faster-whisper or its model is unavailable.
-    With no language given, Whisper detects it, but a short Ukrainian call is often heard as Russian,
-    which the parser can't read: anything other than uk / en is redone as the likelier of the two.
-    Segments are lazy, so the first pass only costs the detection."""
+    With no language given (the radio's "Auto"), Whisper detects it, but a short or replayed Ukrainian
+    call is often heard as Russian or even English, which then comes out translated. So the call is
+    Ukrainian unless Whisper is confident it is English (EN_SURE). Segments are lazy, so the detection
+    pass costs only the detection."""
     model, pcm = _whisper(), decode_audio(audio)
     opts = dict(beam_size=1, vad_filter=False, condition_on_previous_text=False)
     if language not in SPOKEN:
         _, info = model.transcribe(pcm, language=None, **opts)
         probs = dict(getattr(info, "all_language_probs", None) or [])
-        language = info.language if info.language in SPOKEN else max(SPOKEN, key=lambda l: probs.get(l, 0.0))
+        en = probs.get("en", info.language_probability if info.language == "en" else 0.0)
+        language = "en" if en >= EN_SURE else "uk"
     segments, info = model.transcribe(pcm, language=language, initial_prompt=PROMPT[language], **opts)
     return " ".join(s.text.strip() for s in segments).strip(), info.language
 

@@ -334,6 +334,9 @@
     <div class="group" id="radioOut"><h3>Last report</h3><div class="empty" style="padding:0 4px 8px">Nothing heard yet</div></div>
     <div class="group"><h3>Who is speaking</h3>
       <div class="row"><select id="speakerSel"></select></div>
+      <div class="row"><select id="langSel" title="Language spoken into the mic">
+        <option value="uk" selected>Мова: українська</option><option value="en">Language: English</option>
+        <option value="">Language: detect</option></select></div>
       <div class="row" id="driverRow" style="display:none"><button class="grow small" id="driverPosBtn">📍 Set driver position on map</button></div>
     </div>
     <div class="group"><h3>Speak or type</h3>
@@ -1397,6 +1400,8 @@ function setDriverPos(at) {
 function voiceParams(clip) {
   const sel = document.getElementById('speakerSel').value, q = new URLSearchParams();
   if (clip) q.set('clip', clip.name);
+  const lang = clip ? (clip.name.endsWith('-en') ? 'en' : 'uk') : document.getElementById('langSel').value;
+  if (lang) q.set('language', lang);  // Whisper's own detection often takes a Ukrainian call for English or Russian
   if (sel === 'DRIVER' || (clip && clip.driver)) {
     if (!driverPos) setDriverPos(DRIVER_DEFAULT);
     q.set('lat', driverPos.lat); q.set('lon', driverPos.lon);

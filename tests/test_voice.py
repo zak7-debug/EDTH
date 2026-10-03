@@ -192,6 +192,12 @@ def test_transcribe_redoes_other_languages_as_ukrainian(monkeypatch):
     assert voice.transcribe(b"x") == ("Борсук один", "uk") and calls == [None, "uk"]
     calls.clear()
     assert voice.transcribe(b"x", "en")[1] == "en" and calls == ["en"]
+    # detected as English but not surely: still Ukrainian; surely English: English
+    for en, want in ((0.6, "uk"), (0.9, "en")):
+        monkeypatch.setattr(Model, "transcribe", lambda self, pcm, language=None, initial_prompt=None, en=en, **_: (
+            iter([SimpleNamespace(text="x")]),
+            SimpleNamespace(language=language or "en", language_probability=en, all_language_probs=[("en", en)])))
+        assert voice.transcribe(b"x")[1] == want
 
 
 def test_squad_named_while_another_medic_speaks():
