@@ -18,6 +18,7 @@ def msg(type_: str, data: dict) -> dict:
     return {"type": type_, "data": data}
 
 
+# HOOK: sent on /ws connect and returned by GET /state. Arnav's map loads everything from this.
 def snapshot(repo: GraphRepo) -> dict:
     """Whole world, sent on connect. GET /state returns the same `data`."""
     return msg("snapshot", {

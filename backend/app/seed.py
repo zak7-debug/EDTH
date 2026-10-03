@@ -48,6 +48,7 @@ class SeedData:
     supply_links: list[SupplyLink]
 
 
+# DEMO: squads and their callsigns.
 UNITS = [
     Unit("unit-1", "BADGER 1"),
     Unit("unit-2", "BADGER 2"),
@@ -55,6 +56,7 @@ UNITS = [
 ]
 
 # Squad positions (lat, lon), south of the EW jamming zone.
+# DEMO: where each squad stands. Keep them out of NO_FLY_ZONES and within drone range.
 _SQUAD_CENTRES = {
     "unit-1": (47.638, 35.640),
     "unit-2": (47.622, 35.602),
@@ -62,6 +64,7 @@ _SQUAD_CENTRES = {
 }
 _SQUAD_SIZES = {"unit-1": 7, "unit-2": 7, "unit-3": 6}  # incl. one medic each -> 20 total
 
+# TUNE: below these levels a medic counts as LOW_STOCK (Person.low_items).
 MEDIC_THRESHOLDS = {
     "tourniquet": 2,
     "blood_oneg": 2,
@@ -70,6 +73,7 @@ MEDIC_THRESHOLDS = {
     "morphine_autoinjector": 2,
 }
 # Stock per medic. med-2 starts short of blood: that is the demo's LOW_STOCK event.
+# DEMO: med-2 is 1 blood under threshold so the low-stock event fires straight away.
 _MEDIC_STOCK = {
     "med-1": {"tourniquet": 4, "blood_oneg": 3, "chest_seal": 3, "hemostatic_gauze": 4, "morphine_autoinjector": 4},
     "med-2": {"tourniquet": 3, "blood_oneg": 1, "chest_seal": 2, "hemostatic_gauze": 3, "morphine_autoinjector": 3},
@@ -77,6 +81,7 @@ _MEDIC_STOCK = {
 }
 
 # Drone launch sites. Stock is what drones reload from. Launch Site West is short of blood on purpose.
+# DEMO: launch sites. Moving Launch Site North changes whether the EW zone sits on its route.
 DEPOTS = [
     Depot("dep-01", "Launch Site North", 47.7000, 35.7000,
           {"tourniquet": 20, "blood_oneg": 12, "chest_seal": 15, "hemostatic_gauze": 20, "morphine_autoinjector": 10}),
@@ -88,6 +93,7 @@ DEPOTS = [
 
 # Upstream of the launch sites, placed at region level (city-centre coordinates or open country).
 # Names are generic on purpose: no real depots, hospitals or routes.
+# DEMO: upstream supply chain. Region-level only, generic names: keep it fictional.
 FACILITIES = [
     Facility("sup-01", "SUPPLIER", "International donor hub (Rzeszów region, PL)", 50.0400, 22.0000,
              {"tourniquet": 2000, "blood_oneg": 0, "chest_seal": 1500, "hemostatic_gauze": 2500, "morphine_autoinjector": 800}),
@@ -107,6 +113,7 @@ FACILITIES = [
 ]
 
 # Who restocks whom, with transport lead time in minutes.
+# DEMO: who restocks whom, lead time in minutes. find_resupply_sources reads these.
 SUPPLY_LINKS = [
     SupplyLink("sup-01", "dc-03", 180, "TRUCK"),
     SupplyLink("dc-03", "dc-01", 720, "TRUCK"),
@@ -121,6 +128,8 @@ SUPPLY_LINKS = [
 ]
 
 # (id, callsign, depot, speed m/s, range left m, max range m, capacity, status, payload)
+# DEMO: the fleet. Uneven on purpose (see module docstring). tests/test_dispatch.py assumes:
+# drn-04 is nearest to unit-2, drn-05 lacks range, drn-03/06 carry no blood, drn-08 is charging.
 _DRONES = [
     ("drn-01", "HAWK 1", "dep-01", 25.0, 40000, 40000, 8, "IDLE",
      {"tourniquet": 2, "blood_oneg": 2, "hemostatic_gauze": 2, "chest_seal": 2}),
@@ -141,6 +150,8 @@ _DRONES = [
 ]
 
 # Threat zones, stored as no-fly zones: drones route around them.
+# DEMO: threat zones as (lat, lon) polygons. nfz-1 must stay between Launch Site North and the squads
+# for the reroute beat (checked by hand; see docs/foundations-guide.md).
 NO_FLY_ZONES = [
     NoFlyZone("nfz-1", "EW jamming zone", [
         (47.690, 35.650), (47.688, 35.690), (47.668, 35.705),

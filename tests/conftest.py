@@ -1,4 +1,6 @@
+import atexit
 import os
+import shutil
 import sys
 import tempfile
 
@@ -20,8 +22,12 @@ def _turing_repo():
     from backend.app.turing_repo import TuringRepo
     if _turing_client is None:
         host = os.environ.get("TURINGDB_TEST_HOST")
-        _turing_client = (TuringDB(host=host) if host else
-                          TuringDB(type="embedded", data_dir=tempfile.mkdtemp(prefix="edth-tdb-")))
+        if host:
+            _turing_client = TuringDB(host=host)
+        else:
+            data_dir = tempfile.mkdtemp(prefix="edth-tdb-")
+            atexit.register(shutil.rmtree, data_dir, ignore_errors=True)  # graph dumps add up fast
+            _turing_client = TuringDB(type="embedded", data_dir=data_dir)
     repo = TuringRepo(_turing_client, graph_prefix="test_")
     repo.load_seed(load_seed())
     return repo

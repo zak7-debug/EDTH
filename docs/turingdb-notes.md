@@ -13,6 +13,7 @@ Reproduce with `python scripts/turingdb_smoke.py embedded` or, with a server run
 | Full single-property write (new change, SET, submit) | 85 ms | 70 ms | **6 ms** |
 | Seed both graphs | | | ~100 ms |
 | Candidate-drone query through `TuringRepo` | | | ~5 ms |
+| Full dispatch decision (query, ETA maths, atomic claim) | ~100 ms | | **14-18 ms** |
 
 **Decision:** run the server with `turingdb start -demon -in-memory` (what `start.sh` does). Disk-backed submits rewrite the graph file every time; we reseed on start anyway, so persistence buys nothing.
 
@@ -36,4 +37,5 @@ Reproduce with `python scripts/turingdb_smoke.py embedded` or, with a server run
 | No null writes | `claimed_by = ''` means unclaimed. |
 | Client keeps graph/change as state, not thread-safe | `TuringRepo` serialises calls through one lock. |
 | Native (binary) client fails: "Proto header dataLen does not match chunk payload size" | Use the default JSON client. |
+| Every submit keeps the full history: the embedded test engine used ~2.4 GB of disk per test run | Tests delete their data directory on exit (`tests/conftest.py`). Watch the in-memory server's RAM during a long demo run; restart it between rehearsals. |
 | Disk-backed submit is 70-150 ms | `-in-memory` server (6 ms). If a write path still hurts latency, do graph writes after the dispatch message is sent. |

@@ -2,6 +2,16 @@
 
 This is the "why" behind the first-hour foundations. Every later piece (dispatch engine, API, simulator, map) is built on these files, so this guide says what each one decides, what depends on it, and where to edit when the demo needs something different.
 
+## Finding things: search tags
+
+Comments in the code carry three tags so you can grep for them (`grep -rn "TUNE:" backend`):
+
+| Tag | Means | Examples |
+| --- | --- | --- |
+| `TUNE:` | A number or rule you may want to adjust | casualty needs table, range safety margin, triage order, medic thresholds |
+| `HOOK:` | Where another part of the system plugs in | where the API calls the engine, where A* routing slots in, the snapshot the map loads |
+| `DEMO:` | Data or behaviour chosen for the demo scenario | drone payloads, squad positions, threat zones, med-2's low blood |
+
 ## The big picture
 
 ```text
@@ -112,3 +122,24 @@ The real-time dispatch path is unchanged: drones still launch from depots, and t
 - `backend/app/main.py`: a stub (`/health`, `/state`) so the start script works today. Sasank replaces it.
 - `dispatch.py`, `routing.py`, `sim/simulator.py`, `frontend/`: empty placeholders owned by Zak, Ollie, Sasank and Arnav.
 - `tests/`: `pytest` runs every repo test against both repos. The TuringDB run uses the embedded engine, so no server is needed. `TURINGDB_TEST_HOST=http://localhost:6666 pytest` runs them against a live server.
+
+## 8. Dispatch engine (`backend/app/dispatch.py`)
+
+**What it does:** turns an event into a decision in five steps, each commented in `_try_dispatch`:
+1. **Needs:** `needed_items()` maps the event to items. A CRITICAL casualty needs 1 tourniquet, 2 blood and 1 haemostatic gauze (the `NEEDS` table).
+2. **Match:** one graph query, `find_candidate_drones`, returns every free drone carrying enough.
+3. **Route, ETA, range:** for each candidate, in Python. ETA is distance ÷ speed. A drone only qualifies if the trip out, plus the hop to the nearest launch site, × 1.2 fits its battery.
+4. **Pick:** fastest first, then `claim_drone`. If a simultaneous request already took that drone, the claim fails and it tries the next one.
+5. **Explain:** if nothing can go, the result is a `NoDispatch`:
+   - `ALL_BUSY`: the request is queued in triage order.
+   - `OUT_OF_RANGE`: free drones have the kit but not the battery.
+   - `NO_STOCK`: nothing carries the items.
+
+   Each comes with a `nearest_alternative` such as "OWL 1 can reach you in 14 min after reloading at Launch Site Rear".
+
+**Why it matters for the final product:** this is the "under a second" claim. It measured 14-18 ms on the TuringDB server and under 1 ms in memory, and `latency_ms` on every result is what the dashboard's latency counter shows.
+
+**How the backend uses it:** `handle(event)`, then broadcast the result, then `record(result, event)` writes it to the graph. When a drone lands, `drone_freed(id)` releases it and returns any queued requests it can now serve.
+
+**To change:** the `NEEDS`, `RANGE_SAFETY` and `RELOAD_S` constants at the top. Change the selection rule in the sort key in `_try_dispatch` (step 3). Plug in routing with `DispatchEngine(repo, route_fn=routing.route)`.
+
