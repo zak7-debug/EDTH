@@ -22,6 +22,8 @@ from .models import Depot, Dispatch, Drone, Facility, NoFlyZone, Person, SupplyL
 from .seed import SeedData, load_seed
 
 
+# HOOK: the contract between the app and storage. Adding a method? Add it here, in InMemoryRepo
+# and in TuringRepo, and add a test in tests/test_repo.py (runs against both).
 class GraphRepo(Protocol):
     # personnel graph
     def get_person(self, person_id: str) -> Optional[Person]: ...
@@ -62,6 +64,7 @@ class GraphRepo(Protocol):
     def list_dispatches(self) -> list[Dispatch]: ...
 
 
+# Plain-dict implementation: zero setup, used by tests and as the fallback (EDTH_REPO=memory).
 class InMemoryRepo:
     def __init__(self, seed: Optional[SeedData] = None):
         seed = seed or load_seed()
@@ -121,6 +124,7 @@ class InMemoryRepo:
                 out.append((f, link))
         return sorted(out, key=lambda fl: fl[1].lead_time_min)
 
+    # Hot path for dispatch: must stay a single pass / single query.
     def find_candidate_drones(self, items):
         return [d for d in self.drones.values()
                 if d.status == "IDLE" and d.claimed_by is None and d.carries(items)]
@@ -134,6 +138,7 @@ class InMemoryRepo:
                 setattr(d, k, v)
 
     # dispatch lifecycle
+    # The concurrency guard: check-then-set under one lock, so two requests can't both win.
     def claim_drone(self, drone_id, request_id):
         with self._lock:
             d = self.drones.get(drone_id)
@@ -152,6 +157,7 @@ class InMemoryRepo:
     def create_dispatch(self, dispatch):
         self.dispatches[dispatch.request_id] = dispatch
 
+    # HOOK: called by the tick loop on arrival. Moves items from the drone into a medic's stock.
     def complete_dispatch(self, request_id, ts=None):
         disp = self.dispatches.get(request_id)
         if disp is None or disp.status == "DELIVERED":
@@ -170,6 +176,7 @@ class InMemoryRepo:
         return list(self.dispatches.values())
 
 
+# HOOK: main.py builds its repo here. EDTH_REPO=turing needs `turingdb start -demon -in-memory`.
 def get_repo(kind: Optional[str] = None) -> GraphRepo:
     """Build the repo named by `kind` or EDTH_REPO (default "memory"), seeded and ready."""
     kind = (kind or os.environ.get("EDTH_REPO", "memory")).lower()

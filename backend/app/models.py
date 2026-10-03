@@ -13,7 +13,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Literal, Optional
 
-# One shared supply vocabulary for events, medic stock and drone payloads.
+# TUNE: one shared supply vocabulary for events, medic stock and drone payloads. Add an item here and it flows into TuringDB, seed and messages
+# automatically; then give some drones / medics / sites stock of it in seed.py.
 ITEMS = ("tourniquet", "blood_oneg", "chest_seal", "hemostatic_gauze", "morphine_autoinjector")
 
 PersonKind = Literal["SOLDIER", "MEDIC"]
@@ -22,7 +23,7 @@ DroneStatus = Literal["IDLE", "EN_ROUTE", "RETURNING", "CHARGING"]
 EventType = Literal["CASUALTY", "LOW_STOCK"]
 Severity = Literal["CRITICAL", "WOUNDED"]
 
-# Lower number is served first by the triage queue.
+# TUNE: queue order when drones are busy (dispatch.py). Lower number = served first.
 TRIAGE_PRIORITY = {"CRITICAL": 0, "WOUNDED": 1, "LOW_STOCK": 2}
 
 
@@ -46,6 +47,7 @@ class Person:
     stock: dict[str, int] = field(default_factory=dict)
     stock_threshold: dict[str, int] = field(default_factory=dict)
 
+    # Used by dispatch.needed_items() when a LOW_STOCK event doesn't list items.
     def low_items(self) -> dict[str, int]:
         """Items below threshold, with the quantity needed to get back to threshold."""
         return {
@@ -121,6 +123,7 @@ class Drone:
     payload: dict[str, int] = field(default_factory=dict)
     claimed_by: Optional[str] = None  # request_id currently holding this drone
 
+    # True if this drone holds at least the quantity of every requested item.
     def carries(self, items: dict[str, int]) -> bool:
         return all(self.payload.get(i, 0) >= q for i, q in items.items())
 
@@ -163,6 +166,7 @@ class Event:
             items={k: int(v) for k, v in (d.get("items") or {}).items()},
         )
 
+    # Triage level used by the dispatch queue (see TRIAGE_PRIORITY).
     @property
     def priority(self) -> int:
         return TRIAGE_PRIORITY[self.severity if self.type == "CASUALTY" else "LOW_STOCK"]

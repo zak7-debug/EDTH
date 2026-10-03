@@ -38,14 +38,19 @@ from turingdb import TuringDB
 from .models import ITEMS, Depot, Dispatch, Drone, Facility, NoFlyZone, Person, SupplyLink, Unit
 from .seed import SeedData
 
+# Graph names. TURINGDB_GRAPH_PREFIX (env) prepends a prefix, e.g. tests use 'test_'.
 PERSONNEL = "personnel"
 LOGISTICS = "logistics"
 
+# Drone / Person properties stored on the node. A new dataclass field must be listed here to be
+# saved and read back (and added to FLOAT_FIELDS below if it is a float).
 _DRONE_FIELDS = ("id", "callsign", "depot_id", "lat", "lon", "speed_mps", "range_m",
                  "max_range_m", "capacity", "status", "claimed_by")
 _PERSON_FIELDS = ("id", "kind", "callsign", "unit_id", "lat", "lon", "status", "last_update")
 
 
+# Builds Cypher literals by hand: the client has no query parameters. All values come from our
+# own code or validated events; ids are escaped here.
 def lit(v) -> str:
     """Python value -> Cypher literal. None is stored as '' (TuringDB has no null writes)."""
     if v is None:
@@ -60,6 +65,7 @@ def lit(v) -> str:
 
 # TuringDB types each property name strictly (an Int64 property can't later be SET to a
 # Double), so numeric fields are always written with the same Python type.
+# TuringDB fixes a property's type on first write, so floats must always be written as floats.
 FLOAT_FIELDS = {"lat", "lon", "speed_mps", "range_m", "max_range_m", "last_update",
                 "eta_s", "distance_m", "ts", "latency_ms", "delivered_ts", "lead_time_min"}
 INT_FIELDS = {"capacity", "qty", "beds"}
@@ -127,6 +133,8 @@ class TuringRepo:
             self.db.set_graph(graph)
             return self.db.query(q)
 
+    # Every write: CHANGE NEW -> query, COMMIT (each) -> CHANGE SUBMIT -> back to main.
+    # ~6 ms on the in-memory server, ~85 ms on a disk-backed one (docs/turingdb-notes.md).
     def _write(self, graph: str, queries: Iterable[str]) -> None:
         """Run queries in one change and submit. COMMIT after each so later ones can MATCH."""
         with self._lock:
@@ -153,6 +161,7 @@ class TuringRepo:
             pass
         self._write(name, ["MATCH (n) DETACH DELETE n"])
 
+    # Wipes and reloads both graphs from seed.py in two big CREATE statements (~100-400 ms).
     def load_seed(self, seed: SeedData) -> None:
         with self._lock:
             self._reset_graph(self.g_personnel)
@@ -274,6 +283,8 @@ class TuringRepo:
     def get_drone(self, drone_id):
         return next((d for d in self.list_drones() if d.id == drone_id), None)
 
+    # HOT PATH: one 2-hop query over every free drone's CARRIES edges; quantities filtered in Python.
+    # TUNE: to cut rows, add `AND s.id IN [...]` and fetch the full payload only for the winner.
     def find_candidate_drones(self, items):
         # One round trip: every CARRIES edge of every free drone, filtered by quantity in Python.
         df = self._read(self.g_logistics,
@@ -311,6 +322,7 @@ class TuringRepo:
         df = self._read(self.g_logistics, "MATCH (a)-[l:SUPPLIES]->(b) RETURN a.id, b.id, l.lead_time_min, l.mode")
         return [SupplyLink(a, b, float(t), m) for a, b, t, m in df.itertuples(index=False, name=None)]
 
+    # Supply-chain query used for the 'no drone' suggestion and the pitch's graph-query panel.
     def find_resupply_sources(self, depot_id, items):
         # One 2-hop query: who supplies this depot, and what do they hold.
         df = self._read(self.g_logistics,
@@ -355,6 +367,8 @@ class TuringRepo:
             self._write(self.g_logistics, qs)
 
     # dispatch lifecycle
+    # Atomic within this process only. If the app ever runs as several processes, move the claim to
+    # a single owner (one dispatcher process) because TuringDB won't reject a conflicting write.
     def claim_drone(self, drone_id, request_id):
         with self._lock:  # check-then-set must not interleave; TuringDB won't catch conflicts
             df = self._read(self.g_logistics,
@@ -370,6 +384,7 @@ class TuringRepo:
     def release_drone(self, drone_id):
         self.update_drone(drone_id, status="IDLE", claimed_by=None)
 
+    # Edges can't cross graphs, so the drone points at a Recipient stand-in node holding the person's id.
     def create_dispatch(self, dispatch):
         edge = {
             "request_id": dispatch.request_id, "eta_s": dispatch.eta_s,
