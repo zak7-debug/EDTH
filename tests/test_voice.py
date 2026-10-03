@@ -203,3 +203,12 @@ def test_squad_named_while_another_medic_speaks():
     assert r.events[1]["items"] == {"tourniquet": 1, "blood_oneg": 1} and r.events[1]["urgency"] == "CRITICAL"
     assert parse_report("Сокiл два, пілот. Ворожий дрон, вісімсот метрів на північ.", ids,
                         drones={"FALCON 2": ("drn-04", (47.6, 35.6))}).events[0]["type"] == "NO_FLY_ZONE"
+
+
+def test_coordinator_test_sentences_with_another_speaker_selected():
+    ids = _ids()
+    r = parse_report("Борсук три, медик. Борсук один, терміново потрібно поповнення: дві одиниці крові нульова "
+                     "негативна і три турнікети.", ids)
+    assert r.events[0]["subject_id"] == "med-1"  # the medic named in the call, not the one selected
+    r = parse_report("Сокіл 1 збитий.", ids, lost_drones=frozenset({"FALCON 1"}))
+    assert r.unparsed == ["FALCON 1 was already written off"]
