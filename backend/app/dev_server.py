@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import math
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -27,8 +28,10 @@ from fastapi.staticfiles import StaticFiles
 
 from .dispatch import DispatchEngine
 from .flights import FlightTracker
-from .messages import dispatch_msg, event_msg, no_dispatch_msg, queue_msg, snapshot
-from .models import Dispatch, Event
+from . import querylog
+from .messages import (dispatch_msg, event_msg, no_dispatch_msg, query_log_msg, queue_msg, snapshot,
+                       zone_added_msg)
+from .models import Dispatch, Event, NoFlyZone
 from .repo import get_repo
 
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
@@ -36,17 +39,31 @@ TICK_S = 0.5  # TUNE: how often drones move on the map (contract says about 2 up
 
 # DEMO: the scripted scenario behind the "Run demo scenario" button. (seconds after start, event).
 # Story: a critical casualty, then one that forces a detour round the EW jamming zone, then two
-# requests at the same instant (they get different drones), then a burst that exhausts the drones so
+# requests at the same instant (they get different drones), a new threat that forces a drone
+# already in the air to change course, then a burst that exhausts the drones so
 # the triage queue fills and drains as drones come home.
 DEMO_SCRIPT = [
     (0.0, {"type": "CASUALTY", "subject_id": "sol-03", "severity": "CRITICAL"}),
     (5.0, {"type": "CASUALTY", "subject_id": "sol-10", "severity": "CRITICAL"}),
+    (7.0, {"type": "THREAT"}),  # DEMO: new threat on FALCON 1's path; it reroutes mid-flight
     (10.0, {"type": "LOW_STOCK", "subject_id": "med-2", "items": {"blood_oneg": 2}}),
     (10.0, {"type": "CASUALTY", "subject_id": "sol-15", "severity": "WOUNDED"}),
     (16.0, {"type": "CASUALTY", "subject_id": "sol-16", "severity": "CRITICAL"}),
     (22.0, {"type": "CASUALTY", "subject_id": "sol-05", "severity": "CRITICAL"}),
     (23.0, {"type": "CASUALTY", "subject_id": "sol-12", "severity": "WOUNDED"}),
 ]
+
+
+# DEMO: the threat reported mid-scenario (fictional), between Launch Site West and BADGER 1.
+DEMO_THREAT = {"name": "New air-defence threat", "lat": 47.6498, "lon": 35.5888, "radius_m": 900}
+
+
+def _hexagon(lat: float, lon: float, radius_m: float) -> list[tuple[float, float]]:
+    """Six corners round a centre: how a reported threat (point + radius) becomes a zone polygon."""
+    dlat = radius_m / 110_540.0
+    dlon = radius_m / (111_320.0 * math.cos(math.radians(lat)))
+    return [(round(lat + dlat * math.sin(math.radians(a)), 6), round(lon + dlon * math.cos(math.radians(a)), 6))
+            for a in range(0, 360, 60)]
 
 
 class World:
@@ -95,12 +112,41 @@ def _complete(d: dict) -> Event:
     return Event.from_dict(d)
 
 
+async def add_threat(body: dict) -> dict:
+    """A threat reported mid-mission: store it in the graph, then reroute.
+    Body: {"name", "polygon": [[lat, lon], ...]} or {"name", "lat", "lon", "radius_m"}."""
+    poly = body.get("polygon") or _hexagon(float(body["lat"]), float(body["lon"]), float(body.get("radius_m", 800)))
+    zone = NoFlyZone(body.get("id") or f"nfz-live-{next(_ids)}", body.get("name", "Reported threat"),
+                     [tuple(p) for p in poly])
+    t = time.perf_counter()
+    world.repo.add_no_fly_zone(zone)  # graph first, so every later decision sees it
+    world.engine.zones_changed()  # new decisions route round it
+    reroutes = world.tracker.reroute(zone)  # drones already flying change course
+    ms = (time.perf_counter() - t) * 1000
+    await broadcast(zone_added_msg(zone))
+    for m in reroutes:
+        await broadcast(m)
+    return {"zone": zone.to_dict(), "rerouted": [m["data"]["drone_id"] for m in reroutes], "ms": round(ms, 1)}
+
+
+@app.post("/threats")
+async def post_threat(body: dict):
+    """HOOK: report a new threat zone (dashboard button, scenario, or real intel feed)."""
+    return await add_threat(body)
+
+
 async def process(raw: dict, received_perf: float) -> dict:
+    if raw.get("type") == "THREAT":  # DEMO: scripted threats share the event timeline
+        return await add_threat({k: v for k, v in raw.items() if k != "type"} or dict(DEMO_THREAT))
     event = _complete(raw)
     await broadcast(event_msg(event, time.time()))
-    result = world.engine.handle(event, received_perf)  # the timed decision
+    with querylog.capture() as decide_q:
+        result = world.engine.handle(event, received_perf)  # the timed decision
     await broadcast(dispatch_msg(result) if isinstance(result, Dispatch) else no_dispatch_msg(result))
-    world.engine.record(result, event)  # graph writes after the broadcast
+    with querylog.capture() as record_q:
+        world.engine.record(result, event)  # graph writes after the broadcast
+    await broadcast(query_log_msg(event.event_id, "decide", decide_q))
+    await broadcast(query_log_msg(event.event_id, "record", record_q))
     if isinstance(result, Dispatch):
         world.tracker.start(result)
     await broadcast(queue_msg(world.engine.pending()))

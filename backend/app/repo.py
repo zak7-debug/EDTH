@@ -36,6 +36,9 @@ class GraphRepo(Protocol):
     def list_drones(self) -> list[Drone]: ...
     def list_depots(self) -> list[Depot]: ...
     def list_no_fly_zones(self) -> list[NoFlyZone]: ...
+    def add_no_fly_zone(self, zone: NoFlyZone) -> None:
+        """A threat appeared (or a zone was redrawn): create or replace it by id."""
+        ...
     def list_facilities(self) -> list[Facility]: ...
     def list_supply_links(self) -> list[SupplyLink]: ...
     def find_resupply_sources(self, depot_id: str, items: dict[str, int]) -> list[tuple[Facility, SupplyLink]]:
@@ -109,6 +112,9 @@ class InMemoryRepo:
 
     def list_no_fly_zones(self):
         return list(self.no_fly_zones.values())
+
+    def add_no_fly_zone(self, zone):
+        self.no_fly_zones[zone.id] = zone
 
     def list_facilities(self):
         return list(self.facilities.values())

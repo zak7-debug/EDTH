@@ -66,6 +66,14 @@
   #log .t { color: var(--muted); font: 13px ui-monospace, monospace; padding-top: 2px; }
   #log .ms { font: 600 14px ui-monospace, monospace; color: var(--accent); }
   #log .dispatch { color: var(--route); } #log .nod { color: var(--critical); } #log .deliv { color: var(--ok); }
+  /* Graph queries panel (query_log messages) */
+  #queries .qh { font-size: 14px; color: var(--muted); margin-bottom: 4px; }
+  #queries .qh b { color: var(--accent); font-family: ui-monospace, monospace; }
+  #queries .cy { font: 12px/1.35 ui-monospace, Menlo, monospace; color: #c9d1d9; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 7px; margin-bottom: 4px; max-height: 64px; overflow: hidden; cursor: pointer; word-break: break-all; }
+  #queries .cy.open { max-height: none; }
+  #queries .cy .m { float: right; color: var(--accent); font-weight: 700; margin-left: 8px; }
+  #queries .cy .w { color: var(--wounded); }
   #queue .q { display: flex; justify-content: space-between; padding: 4px 0; font-size: 15px; }
   .empty { color: var(--muted); font-size: 14px; }
   .sev-CRITICAL { color: var(--critical); font-weight: 700; } .sev-WOUNDED { color: var(--wounded); font-weight: 700; }
@@ -92,6 +100,9 @@
   .flash { animation: flash 1s ease-out 3; } @keyframes flash { 0% { box-shadow: 0 0 0 0 var(--ok); } 100% { box-shadow: 0 0 0 26px transparent; } }
   .lbl { background: transparent; border: 0; box-shadow: none; color: #fff; font: 600 13px system-ui; text-shadow: 0 0 3px #000, 0 0 3px #000; }
   .lbl::before { display: none; }
+  .new-zone { animation: zonepulse 1.2s ease-in-out 5; } @keyframes zonepulse { 50% { fill-opacity: .55; } }
+  #mapwrap.placing #map { cursor: crosshair; }
+  #log .reroute { color: var(--wounded); }
   .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--panel); color: var(--text); }
   .leaflet-popup-content { font-size: 15px; }
   .leaflet-popup-content table { border-collapse: collapse; } .leaflet-popup-content td { padding: 1px 8px 1px 0; }
@@ -104,6 +115,7 @@
   <h1>Medic Resupply Ops</h1>
   <span id="conn" class="pill">connecting</span>
   <button class="primary" id="demoBtn">Run demo scenario</button>
+  <button id="threatBtn" class="crit" title="Then click the map where the threat is">Report threat</button>
   <button id="resetBtn" title="Reseed the world between rehearsals">Reset</button>
   <div class="lat">
     <div><span class="k">last decision</span><span class="v" id="latLast">--</span> <span class="k" style="display:inline">ms</span></div>
@@ -129,6 +141,7 @@
         <input id="qty" type="number" min="1" value="2"><button id="lowBtn">Low stock</button></div>
     </section>
     <section id="queue"><h2>Waiting for a drone</h2><div class="empty">Nobody waiting</div></section>
+    <section id="queries"><h2>Graph queries (last request)</h2><div class="empty">None yet</div></section>
     <section style="border-bottom:0;padding-bottom:4px"><h2>Event log</h2></section>
     <div id="log"></div>
   </aside>
@@ -310,6 +323,28 @@ const handlers = {
     if (p) { drawPerson(p); flash(p); }
     log(`Delivered to ${esc(name(x.recipient_id))} by ${esc(name(x.drone_id))}: ${esc(fmtItems(x.items))}`, 'deliv');
   },
+  // HOOK: query_log. "decide" = what TuringDB ran inside the timed decision; "record" = the writes after.
+  query_log(x) {
+    const el = document.getElementById('queries');
+    if (x.phase === 'decide') { el.dataset.req = x.request_id; el.innerHTML = '<h2>Graph queries (last request)</h2>'; }
+    else if (el.dataset.req !== x.request_id) return;
+    const label = x.phase === 'decide' ? 'Decision' : 'Writes after broadcast';
+    if (!x.queries.length) { if (x.phase === 'decide') el.innerHTML += '<div class="empty">In-memory store: no graph queries</div>'; return; }
+    el.innerHTML += `<div class="qh">${label} · ${x.queries.length} quer${x.queries.length > 1 ? 'ies' : 'y'} · <b>${x.total_ms.toFixed(1)} ms</b></div>` +
+      x.queries.map(q => `<div class="cy" onclick="this.classList.toggle('open')"><span class="m">${q.ms.toFixed(1)} ms${q.rows != null ? ' · ' + q.rows + ' rows' : ''}</span>` +
+        `<span class="${q.kind === 'write' ? 'w' : ''}">${esc(q.graph)}</span> ${esc(q.cypher)}</div>`).join('');
+  },
+  zone_added(z) {
+    L.polygon(z.polygon, { color: '#f85149', weight: 3, fillColor: '#f85149', fillOpacity: .25, className: 'new-zone' })
+      .bindTooltip(z.name, { permanent: true, direction: 'center', className: 'lbl' }).addTo(layers.zones);
+    log(`<span class="sev-CRITICAL">THREAT</span> reported: ${esc(z.name)}`, 'nod');
+  },
+  // A drone already flying changed course: redraw from where it is now.
+  reroute(r) {
+    if (r.phase === 'EN_ROUTE') drawRoute(r.request_id, r.route);
+    eta[r.drone_id] = { eta: r.eta_s, at: performance.now(), rate: (eta[r.drone_id] || {}).rate || 1, req: r.request_id, status: r.phase };
+    log(`<b>${esc(name(r.drone_id))}</b> rerouted round ${esc(r.zone)}: ${r.added_m >= 0 ? '+' : ''}${(r.added_m / 1000).toFixed(1)} km, ETA now ${fmtEta(r.eta_s)}`, 'reroute');
+  },
   queue(q) {
     const el = document.getElementById('queue');
     el.innerHTML = '<h2>Waiting for a drone</h2>' + (q.pending.length ? q.pending.map(r =>
@@ -408,6 +443,14 @@ document.querySelectorAll('[data-sev]').forEach(b => b.onclick = () =>
 document.getElementById('lowBtn').onclick = () => post('/events', { type: 'LOW_STOCK',
   subject_id: document.getElementById('medicSel').value,
   items: { [document.getElementById('itemSel').value]: +document.getElementById('qty').value || 1 } });
+// Report threat: arm, then the next map click reports a threat there (TUNE: radius).
+document.getElementById('threatBtn').onclick = () => { document.getElementById('mapwrap').classList.add('placing'); toast('Click the map where the threat is'); };
+map.on('click', e => {
+  const wrap = document.getElementById('mapwrap');
+  if (!wrap.classList.contains('placing')) return;
+  wrap.classList.remove('placing');
+  post('/threats', { name: 'Reported threat', lat: e.latlng.lat, lon: e.latlng.lng, radius_m: 800 });
+});
 document.getElementById('demoBtn').onclick = () => post('/scenario/demo');                       // DEMO
 document.getElementById('resetBtn').onclick = () => { document.getElementById('log').innerHTML = ''; latencies.length = 0; post('/reset'); };
 

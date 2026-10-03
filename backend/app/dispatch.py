@@ -100,6 +100,7 @@ class DispatchEngine:
         self.repo = repo
         # HOOK: routing. Default = A* around the zones in the graph (routing.py), built once here.
         # Restart the engine (or rebuild the Router) if zones change mid-demo.
+        self._auto_route = route_fn is None
         self.route_fn = route_fn or Router.from_repo(repo).route
         self.clock = clock  # injectable so tests / replay mode can control timestamps
         self._queue: list[_Queued] = []  # heap of requests waiting for a drone
@@ -158,6 +159,12 @@ class DispatchEngine:
             for q in still_waiting:
                 heapq.heappush(self._queue, q)
         return served
+
+    def zones_changed(self) -> None:
+        """A threat zone was added or moved: rebuild the router from the graph so every later
+        decision routes round it. HOOK: called by POST /threats (flights.py reroutes drones in the air)."""
+        if self._auto_route:
+            self.route_fn = Router.from_repo(self.repo).route
 
     def pending(self) -> list[Event]:
         """Queued requests in triage order. HOOK: payload for the `queue` WebSocket message."""

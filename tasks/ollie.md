@@ -42,7 +42,9 @@ Ollie makes TuringDB the real store behind `GraphRepo` by 14:00 and builds the n
 
 ### 20:00 to 22:00: Query log
 
-- [ ] Record each Cypher query with its duration, and send it over the WebSocket as a new `query_log` message (agree the shape with Sasank and Arnav)
+> Done 2026-10-03: `query_log` message and the dashboard's Graph queries panel (guide section 12).
+
+- [x] Record each Cypher query with its duration, and send it over the WebSocket as a new `query_log` message (agree the shape with Sasank and Arnav)
 
 ### Sunday
 

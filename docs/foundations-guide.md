@@ -183,3 +183,34 @@ The real-time dispatch path is unchanged: drones still launch from depots, and t
 
 **To change:** colours are CSS variables at the top and `STATUS_COLOUR` / `DRONE_COLOUR` in the script. One function per message type lives in `handlers`. After editing `seed.py`, run `python scripts/export_mock.py` to refresh the mock.
 
+## 12. Graph queries panel (`backend/app/querylog.py`)
+
+**What it does:** shows the judges exactly what TuringDB did for the last request. The panel lists:
+- the Cypher queries run inside the timed decision: the one candidate query, the claim check and the claim write
+- the writes made after the broadcast: the `DISPATCHED_TO` edge and the casualty's status
+
+Each query shows its milliseconds and row count; click one to see the full text.
+
+**How it works:** `TuringRepo._read` and `_write` call `querylog.record()` after every query or write change. `record()` keeps nothing unless a `querylog.capture()` block is open, so it costs nothing elsewhere. The dev server opens one block around `engine.handle()` and one around `engine.record()`, then sends two `query_log` messages (`phase` "decide" and "record"; see contracts/messages.md).
+
+**Why it matters for the final product:** it backs the TuringDB slide with live evidence: one query finds every suitable drone, and the whole decision is a few milliseconds of graph work. On the in-memory repo the panel says there are no graph queries.
+
+**To change:** `MAX_CYPHER_CHARS` sets how much of a long statement is shown. Add `querylog.capture()` anywhere else you want logged, for example around `complete_dispatch` in flights.py.
+
+## 13. Live threats and rerouting (`POST /threats`, `flights.py` `reroute`)
+
+**What it does:** when a new threat is reported mid-mission, the system responds in four steps:
+1. It writes the threat into the graph as a `NoFlyZone` (`repo.add_no_fly_zone`, MERGE by id, so redrawing a zone replaces it).
+2. It rebuilds the router (`engine.zones_changed()`), so every later decision avoids the threat.
+3. Every drone already in the air whose remaining path crosses the new zone gets a new shortest safe path from where it is (`tracker.reroute(zone)`).
+4. The dashboard draws the zone with a pulse, redraws the affected routes and logs "FALCON 1 rerouted round New air-defence threat: +0.5 km, ETA now 3:39".
+
+**How to trigger it:**
+- On the dashboard, press **Report threat**, then click the map (800 m radius).
+- From code or a feed, `POST /threats` with `{"name", "lat", "lon", "radius_m"}` or `{"name", "polygon": [[lat, lon], ...]}`.
+- In the demo scenario it fires at 7 s (`DEMO_THREAT` in dev_server.py), right on FALCON 1's path while it is flying.
+
+**Why it matters for the final product:** this is the pitch claim that a new route is found quickly when the situation changes. Measured on TuringDB, the whole reaction (graph write, router rebuild, reroutes) takes a few milliseconds.
+
+**To change:** move or resize `DEMO_THREAT`, or edit the `(7.0, {"type": "THREAT"})` line in `DEMO_SCRIPT`. There is no range re-check after a detour (a `TUNE` note in `reroute`); the 1.2 safety margin covers demo-sized detours. The stored `DISPATCHED_TO.route_json` keeps the original route.
+
