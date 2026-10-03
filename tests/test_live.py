@@ -20,6 +20,7 @@ def test_full_lifecycle_drains_queue(repo):
     for d in repo.list_drones():  # leave a single drone in service
         if d.id != "drn-04":
             repo.update_drone(d.id, status="CHARGING")
+    repo.adjust_stock("dep-02", {"blood_oneg": 10})  # West starts short of blood; that case is in test_stock.py
     first = engine.handle(casualty(repo, "sol-03", eid="e1"))
     engine.record(first)
     tracker.start(first)
@@ -47,11 +48,19 @@ def test_dev_server_event_roundtrip(monkeypatch):
             assert ws.receive_json()["type"] == "queue"
             chain = ws.receive_json()
             assert chain["type"] == "supply_chain" and len(chain["data"]["routes"]) == 3
+            stock = ws.receive_json()
+            assert stock["type"] == "stock_update"
+            assert [o["depot_id"] for o in stock["data"]["orders"]] == ["dep-02"]  # West reorders blood at start
             r = client.post("/events", json={"type": "CASUALTY", "subject_id": "sol-10", "severity": "CRITICAL"})
             assert r.status_code == 200 and r.json()["drone_id"]
             assert ws.receive_json()["type"] == "event"
             d = ws.receive_json()
             assert d["type"] == "dispatch" and d["data"]["latency_ms"] < 50
+            for _ in range(20):  # query_log x2, queue, then the evacuation
+                m = ws.receive_json()
+                if m["type"] == "evacuation":
+                    break
+            assert m["type"] == "evacuation" and m["data"]["facility_id"] == "hos-01"  # CRITICAL -> Role 2
         assert client.post("/events", json={"type": "CASUALTY", "subject_id": "nobody"}).status_code == 404
         r = client.post("/sites", json={"facility_id": "dc-02", "status": "DESTROYED"})
         assert r.status_code == 200 and r.json()["status"]["dc-02"] == "DESTROYED"

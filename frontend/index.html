@@ -9,6 +9,8 @@
     through the real dispatch engine and TuringDB.
   - Opened from disk with no backend, it shows mock/snapshot.js (the seed) so layout work never
     waits on the API.
+  - Map background: tiles come from the backend's /tiles cache (works offline once
+    scripts/fetch_tiles.py has run), else straight from CARTO, else an offline grid backdrop.
 
   Plain HTML + JavaScript + Leaflet from a CDN, no build step. Searchable tags:
     TUNE: numbers / colours to adjust   HOOK: where it talks to the backend   DEMO: demo-only behaviour
@@ -114,6 +116,26 @@
   .leaflet-popup-content { font-size: 15px; }
   .leaflet-popup-content table { border-collapse: collapse; } .leaflet-popup-content td { padding: 1px 8px 1px 0; }
   .low-item { color: var(--wounded); font-weight: 700; }
+  /* Launch-site stock panel (stock_update messages) */
+  #stock table { width: 100%; border-collapse: collapse; font: 14px ui-monospace, Menlo, monospace; }
+  #stock th { font: 600 12px system-ui; color: var(--muted); text-align: right; padding: 0 0 4px 6px; }
+  #stock th:first-child, #stock td:first-child { text-align: left; padding-left: 0; font-family: system-ui; }
+  #stock td { text-align: right; padding: 3px 0 3px 6px; border-top: 1px solid #21262d; }
+  #stock td.low { color: var(--critical); font-weight: 700; } #stock td.chg { animation: chg 1.5s ease-out; }
+  @keyframes chg { 0% { background: #39d0d855; } 100% { background: transparent; } }
+  #stock .ord { font-size: 13px; color: var(--muted); padding: 3px 0 0; } #stock .ord b { color: var(--accent); font-family: ui-monospace, monospace; }
+  #stock .ord.lost { color: var(--critical); text-decoration: line-through; }
+  #stock .beds { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  #stock .beds b { color: var(--text); }
+  #log .evac { color: #f778ba; } #log .stock { color: var(--depot); }
+  .amb { display: flex; align-items: center; gap: 4px; white-space: nowrap; font: 700 13px system-ui; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  .amb .box { width: 18px; height: 14px; background: #f778ba; border: 2px solid #fff; border-radius: 3px; color: #fff; font: 900 11px/10px system-ui; text-align: center; flex: none; }
+  .amb .eta { background: #f778ba; color: #000; text-shadow: none; padding: 1px 6px; border-radius: 6px; font: 700 14px ui-monospace, monospace; }
+  .hosp { width: 20px; height: 20px; background: #f778ba; border: 2px solid #fff; border-radius: 4px; color: #fff; font: 900 15px/16px system-ui; text-align: center; }
+  .hosp.down { background: #555; }
+  #map.offline { background-color: #0b0f14; }
+  .offline-note { position: absolute; top: 14px; right: 60px; z-index: 900; background: #161b22e6; border: 1px solid var(--line);
+    border-radius: 8px; padding: 4px 10px; font-size: 13px; color: var(--muted); display: none; }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; grid-template-rows: 60vh auto; } aside { border-left: 0; } }
 </style>
 </head>
@@ -135,8 +157,9 @@
     <div id="map"></div>
     <div id="banner" title="click to dismiss"></div>
     <div id="toast"></div>
+    <div class="offline-note" id="offlineNote">Offline map: run scripts/fetch_tiles.py once online</div>
     <div class="legend">
-      <i style="background:var(--ok)"></i>OK<i style="background:var(--wounded)"></i>Wounded<i style="background:var(--critical)"></i>Critical<i style="background:var(--medic)"></i>Medic<i style="background:var(--depot);border-radius:2px"></i>Launch site
+      <i style="background:var(--ok)"></i>OK<i style="background:var(--wounded)"></i>Wounded<i style="background:var(--critical)"></i>Critical<i style="background:var(--medic)"></i>Medic<i style="background:var(--depot);border-radius:2px"></i>Launch site<i style="background:#f778ba;border-radius:2px"></i>Hospital / evacuation
     </div>
   </div>
   <aside>
@@ -149,6 +172,7 @@
       <div class="row"><select id="droneSel"></select><button class="crit" id="lostBtn">Shot down</button></div>
     </section>
     <section id="queue"><h2>Waiting for a drone</h2><div class="empty">Nobody waiting</div></section>
+    <section id="stock"><h2>Launch-site stock</h2><div class="empty">Waiting for stock levels</div></section>
     <section>
       <h2>Resupply routes to launch sites</h2>
       <div id="chain"><div class="empty">Waiting for the supply chain</div></div>
@@ -167,7 +191,7 @@
 // HOOK: backend address. Served by the API -> same host. Opened from disk -> localhost:8000.
 const API = location.protocol === 'file:' ? 'http://localhost:8000' : location.origin;
 const WS_URL = API.replace(/^http/, 'ws') + '/ws';
-const STATUS_COLOUR = { OK: '#3fb950', WOUNDED: '#f0b429', CRITICAL: '#f85149' };  // TUNE: soldier colours
+const STATUS_COLOUR = { OK: '#3fb950', WOUNDED: '#f0b429', CRITICAL: '#f85149', ADMITTED: '#f778ba' };  // TUNE: soldier colours
 const DRONE_COLOUR = { IDLE: '#8b949e', EN_ROUTE: '#39d0d8', RETURNING: '#d2a8ff', CHARGING: '#f0b429', LOST: '#f85149' };  // TUNE
 const LATENCY_WINDOW = 20;   // TUNE: how many decisions the rolling average covers
 const BANNER_MS = 12000;     // TUNE: how long a no_dispatch banner stays up
@@ -182,29 +206,61 @@ const routes = {};          // request_id -> polyline
 const eta = {};             // drone_id -> {eta, at, rate}  (seconds, performance.now(), mission-s per real-s)
 const latencies = [];
 let chainRoutes = null, siteStatus = {};
+let stockState = null;      // last stock_update: launch-site stock, facility beds, shipments on the way
+const evacs = {};           // evac_id -> {marker, line, person_id, eta, at}
 const chainActive = L.layerGroup();  // active restock routes + destroyed-site markers, redrawn on each supply_chain
 let mode = 'connecting';
 
 // ---------------------------------------------------------------------------------------------
 // Map
 // ---------------------------------------------------------------------------------------------
-const map = L.map('map', { zoomControl: true, preferCanvas: false }).setView([47.66, 35.6], 12);  // DEMO: sector centre
-// TUNE: dark basemap. Swap for 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' if CARTO is blocked.
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-  attribution: '&copy; OpenStreetMap contributors &copy; CARTO', maxZoom: 18, subdomains: 'abcd' }).addTo(map);
+const map = L.map('map', { zoomControl: true, preferCanvas: false }).setView([47.685, 35.56], 12);  // DEMO: sector centre, Role 2 hospital in view
+// HOOK: map background. Served by the backend -> its /tiles cache (offline once scripts/fetch_tiles.py
+// has run). Opened from disk -> a local tiles/ folder if there is one. Any tile that fails falls back
+// to CARTO directly; if that fails too we draw an offline grid backdrop instead of a black map.
+const CARTO = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png';  // TUNE: upstream basemap
+const LOCAL_TILES = location.protocol === 'file:' ? 'tiles/{z}/{x}/{y}.png' : API + '/tiles/{z}/{x}/{y}.png';
+const base = L.tileLayer(LOCAL_TILES, { attribution: '&copy; OpenStreetMap contributors &copy; CARTO', maxZoom: 18 }).addTo(map);
+let tileFails = 0, tileOk = 0;
+base.on('tileerror', e => {
+  const t = e.tile;
+  if (!t.dataset.retried) {  // second chance: straight from CARTO
+    t.dataset.retried = 1;
+    t.src = L.Util.template(CARTO, { s: 'abcd'[(e.coords.x + e.coords.y) % 4], z: e.coords.z, x: e.coords.x, y: e.coords.y });
+  } else if (++tileFails >= 4 && !tileOk) showOfflineBackdrop();
+});
+base.on('tileload', () => { tileOk++; });
+// Offline backdrop: a 0.05° grid and a few real towns for orientation (geography only, no military sites).
+const BACKDROP_TOWNS = [['Zaporizhzhia', 47.838, 35.139], ['Orikhiv', 47.567, 35.785], ['Dnipro', 48.464, 35.046],
+  ['Kyiv', 50.450, 30.523], ['Lviv', 49.840, 24.030], ['Rzeszów', 50.041, 21.999]];  // DEMO
+let backdrop = null;
+function showOfflineBackdrop() {
+  if (backdrop) return;
+  backdrop = L.layerGroup().addTo(map);
+  document.getElementById('map').classList.add('offline');
+  document.getElementById('offlineNote').style.display = 'block';
+  const g = { color: '#30363d', weight: 1, interactive: false };
+  for (let lat = 44; lat <= 53; lat += 0.05) L.polyline([[lat, 20], [lat, 40]], { ...g, weight: Math.abs(lat % 1) < 0.01 ? 2 : 1 }).addTo(backdrop);
+  for (let lon = 20; lon <= 40; lon += 0.05) L.polyline([[44, lon], [53, lon]], { ...g, weight: Math.abs(lon % 1) < 0.01 ? 2 : 1 }).addTo(backdrop);
+  for (const [n, lat, lon] of BACKDROP_TOWNS) L.marker([lat, lon], { interactive: false, icon: L.divIcon({ className: '',
+    html: `<div style="color:#8b949e;font:600 13px system-ui;white-space:nowrap">◦ ${n}</div>`, iconAnchor: [4, 8] }) }).addTo(backdrop);
+}
 const layers = {
   zones: L.layerGroup().addTo(map), depots: L.layerGroup().addTo(map), routes: L.layerGroup().addTo(map),
   personnel: L.layerGroup().addTo(map), drones: L.layerGroup().addTo(map), chain: L.layerGroup(),
+  hospitals: L.layerGroup().addTo(map), evac: L.layerGroup().addTo(map),
 };
 L.control.layers(null, { 'Threat zones': layers.zones, 'Launch sites': layers.depots, 'Routes': layers.routes,
-  'Personnel': layers.personnel, 'Drones': layers.drones, 'Supply chain (rear)': layers.chain },
+  'Personnel': layers.personnel, 'Drones': layers.drones, 'Hospitals and aid stations': layers.hospitals,
+  'Evacuations': layers.evac, 'Supply chain (rear)': layers.chain },
   { collapsed: true, position: 'topleft' }).addTo(map);
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const clock = d => d.toLocaleTimeString([], { hour12: false });
 const fmtEta = s => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 const fmtItems = it => Object.entries(it || {}).map(([k, v]) => `${v}× ${k.replace(/_/g, ' ')}`).join(', ');
-const name = id => (S.personnel[id] && S.personnel[id].callsign) || (S.drones[id] && S.drones[id].callsign) || id;
+const name = id => (S.personnel[id] && S.personnel[id].callsign) || (S.drones[id] && S.drones[id].callsign)
+  || (S.facilities[id] && S.facilities[id].name) || (S.depots[id] && S.depots[id].name) || id;
 const unitName = p => (S.units[p.unit_id] && S.units[p.unit_id].callsign) || p.unit_id;
 
 function personPopup(p) {
@@ -288,10 +344,72 @@ function loadSnapshot(data) {
     if (a && b) L.polyline([[a.lat, a.lon], [b.lat, b.lon]], { color: '#d2a8ff', weight: 2, opacity: .6, dashArray: '2 6' })
       .bindTooltip(`${l.mode} · ${l.lead_time_min} min`, { className: 'lbl' }).addTo(layers.chain);
   }
+  for (const k in evacs) delete evacs[k];
+  Object.values(S.facilities).filter(f => f.kind === 'HOSPITAL').forEach(drawHospital);
+  for (const e of data.evacuations || []) drawEvac(e);
   Object.values(S.personnel).forEach(drawPerson);
   Object.values(S.drones).forEach(drawDrone);
   for (const d of data.dispatches || []) { drawRoute(d.request_id, d.route); eta[d.drone_id] = { eta: d.eta_s, at: performance.now(), rate: 1 }; }
   fillTriggers();
+}
+
+// Hospitals and aid stations are evacuation destinations, so they sit on the sector map (the rear
+// supply chain layer still shows every site). Popup: beds and stock, kept current by stock_update.
+const hospMarkers = {};
+function drawHospital(f) {
+  const role = (f.role || '').replace('ROLE_', 'Role ');
+  const down = f.status === 'DESTROYED';
+  const icon = L.divIcon({ className: '', html: `<div class="hosp ${down ? 'down' : ''}">${down ? '✕' : '+'}</div>`, iconSize: [20, 20], iconAnchor: [10, 10] });
+  let m = hospMarkers[f.id];
+  if (!m || !layers.hospitals.hasLayer(m)) {
+    m = hospMarkers[f.id] = L.marker([f.lat, f.lon], { icon, zIndexOffset: 400 }).addTo(layers.hospitals);
+    m.bindTooltip(f.name.replace(/ \(.*\)/, ''), { permanent: f.role !== 'ROLE_3', direction: 'top', offset: [0, -10], className: 'lbl' });
+  } else m.setIcon(icon);
+  m.bindPopup(`<b>${esc(f.name)}</b><br>${role} · beds ${f.beds_used || 0}/${f.beds}${down ? ' · <span class="sev-CRITICAL">destroyed</span>' : ''}<br>${esc(fmtItems(f.stock)) || 'no stock'}`);
+}
+
+// One evacuation: pink road route + an ambulance marker that moves with evac_update.
+function drawEvac(e) {
+  const old = evacs[e.evac_id] || Object.values(evacs).find(x => x.person_id === e.person_id);
+  if (old) { layers.evac.removeLayer(old.line); layers.evac.removeLayer(old.marker); delete evacs[old.id]; }
+  const p = S.personnel[e.person_id];
+  const line = L.polyline(e.route, { color: '#f778ba', weight: 4, opacity: .85, dashArray: '2 8', lineCap: 'round' }).addTo(layers.evac);
+  const marker = L.marker(e.route[0], { zIndexOffset: 900, icon: ambIcon(e.evac_id, p) }).addTo(layers.evac)
+    .bindPopup(`<b>Evacuation</b> · ${esc(p ? p.callsign : e.person_id)} (${esc(e.severity)})<br>to ${esc(name(e.facility_id))}<br>kit: ${esc(fmtItems(e.kit))}${Object.keys(e.shortfall || {}).length ? '<br>flown ahead: ' + esc(fmtItems(e.shortfall)) : ''}`);
+  evacs[e.evac_id] = { id: e.evac_id, line, marker, person_id: e.person_id, eta: e.eta_s, at: performance.now(), rate: 1 };
+}
+function ambIcon(id, p) {
+  return L.divIcon({ className: '', iconSize: null, iconAnchor: [11, 9],
+    html: `<div class="amb"><span class="box">+</span>${esc(p ? p.callsign : '')}<span class="eta" data-evac="${id}"></span></div>` });
+}
+
+// Launch-site stock table + shipments on the way + hospital beds.
+const ITEM_SHORT = { tourniquet: 'TQ', blood_oneg: 'Blood', chest_seal: 'Seal', hemostatic_gauze: 'Gauze', morphine_autoinjector: 'Morph' };  // TUNE
+const orderClock = {};  // order_id -> {left, at}: real seconds until it lands
+function renderStock(changedIds = []) {
+  const st = stockState; if (!st) return;
+  const items = Object.keys(ITEM_SHORT);
+  const prev = renderStock.prev || {};
+  let h = '<h2>Launch-site stock</h2><table><tr><th></th>' + items.map(i => `<th>${ITEM_SHORT[i]}</th>`).join('') + '</tr>';
+  for (const d of st.depots) {
+    h += `<tr><td>${esc(d.name.replace('Launch Site ', ''))}</td>` + items.map(i => {
+      const v = d.stock[i] || 0, was = prev[d.id + i];
+      return `<td class="${v < st.reorder_point ? 'low' : ''} ${was != null && was !== v ? 'chg' : ''}">${v}</td>`;
+    }).join('') + '</tr>';
+  }
+  h += '</table>';
+  const nm = id => (S.facilities[id] || S.depots[id] || { name: id }).name;
+  const live = st.orders.filter(o => o.status === 'IN_TRANSIT' || (o.status === 'LOST' && Date.now() / 1000 - o.placed_ts < 600));
+  for (const o of live) {
+    if (o.status === 'IN_TRANSIT') orderClock[o.order_id] = { left: o.remaining_s_real, at: performance.now(), mins: o.remaining_min, speed: st.order_speed };
+    h += o.status === 'LOST'
+      ? `<div class="ord lost">${esc(fmtItems(o.items))} to ${esc(nm(o.depot_id))}: lost at ${esc(nm(o.lost_at))}</div>`
+      : `<div class="ord">↳ ${esc(fmtItems(o.items))} to ${esc(nm(o.depot_id))} from ${esc(nm(o.source_id))} · <b data-order="${o.order_id}"></b></div>`;
+  }
+  const beds = st.facilities.filter(f => f.beds && f.status !== 'DESTROYED' && S.facilities[f.id] && S.facilities[f.id].role !== 'ROLE_3');
+  if (beds.length) h += '<div class="beds">' + beds.map(f => `${esc(nm(f.id).replace(/ \(.*\)/, ''))} <b>${f.beds_used}/${f.beds}</b> beds`).join(' · ') + '</div>';
+  document.getElementById('stock').innerHTML = h;
+  renderStock.prev = Object.fromEntries(st.depots.flatMap(d => items.map(i => [d.id + i, d.stock[i] || 0])));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -398,6 +516,40 @@ const handlers = {
       if (hit) showAlert(`<b>${esc(f)} destroyed.</b> Supply chain re-planned in ${c.changed.ms.toFixed(1)} ms.<div class="alt">${lines.join('<br>') || 'No launch site affected'}</div>`);
     }
   },
+  // HOOK: stock_update. Launch-site and hospital stock as the graph holds it now, plus shipments.
+  stock_update(x) {
+    stockState = x;
+    for (const d of x.depots) if (S.depots[d.id]) S.depots[d.id].stock = d.stock;
+    for (const f of x.facilities) if (S.facilities[f.id]) { Object.assign(S.facilities[f.id], { stock: f.stock, beds_used: f.beds_used, status: f.status }); if (S.facilities[f.id].kind === 'HOSPITAL') drawHospital(S.facilities[f.id]); }
+    renderStock();
+    if (x.change && x.change.note) {
+      const k = x.change.kind;
+      const bad = k === 'order_lost' || k === 'order_failed' || (k === 'reload' && Object.keys(x.change.short || {}).length);
+      log(esc(x.change.note), bad ? 'nod' : k === 'treated' ? 'evac' : 'stock');
+    }
+  },
+  evacuation(e) {
+    if (!e.evac_id) { log(`${esc(e.note || 'No evacuation')}: ${esc(e.reason)}`, 'nod'); return; }
+    drawEvac(e);
+    if (e.note) log(esc(e.note), e.diverted_from ? 'nod' : 'evac');
+    if (e.diverted_from) showAlert(`<b>${esc(e.note)}</b>`);
+  },
+  evac_update(u) {
+    const ev = evacs[u.evac_id]; if (!ev) return;
+    ev.marker.setLatLng([u.lat, u.lon]);
+    const now = performance.now();
+    let rate = ev.rate;
+    if (ev.eta > u.eta_s && now > ev.at) rate = 0.5 * rate + 0.5 * ((ev.eta - u.eta_s) / ((now - ev.at) / 1000));
+    Object.assign(ev, { eta: u.eta_s, at: now, rate });
+    const p = S.personnel[u.person_id];
+    if (p && u.phase === 'MOVING') { p.lat = u.lat; p.lon = u.lon; const m = markers.personnel[p.id]; if (m) m.setLatLng([u.lat, u.lon]); }
+  },
+  admitted(a) {
+    const ev = evacs[a.evac_id];
+    if (ev) { layers.evac.removeLayer(ev.line); layers.evac.removeLayer(ev.marker); delete evacs[a.evac_id]; }
+    const p = S.personnel[a.person_id], f = S.facilities[a.facility_id];
+    if (p) { p.status = 'ADMITTED'; if (f) { p.lat = f.lat; p.lon = f.lon; } drawPerson(p); }
+  },
   queue(q) {
     const el = document.getElementById('queue');
     el.innerHTML = '<h2>Waiting for a drone</h2>' + (q.pending.length ? q.pending.map(r =>
@@ -474,6 +626,15 @@ setInterval(() => {
   document.querySelectorAll('[data-eta]').forEach(el => {
     const e = eta[el.dataset.eta]; if (!e) return;
     el.textContent = fmtEta(e.eta - e.rate * (now - e.at) / 1000);
+  });
+  document.querySelectorAll('[data-evac]').forEach(el => {
+    const e = evacs[el.dataset.evac]; if (!e) return;
+    el.textContent = fmtEta(e.eta - e.rate * (now - e.at) / 1000);
+  });
+  document.querySelectorAll('[data-order]').forEach(el => {  // shipments: show lead-time minutes left
+    const o = orderClock[el.dataset.order]; if (!o) return;
+    const left = Math.max(0, o.left - (now - o.at) / 1000);
+    el.textContent = `${Math.ceil(left * o.speed / 60)} min`;
   });
 }, 250);
 

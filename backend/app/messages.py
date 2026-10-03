@@ -10,7 +10,8 @@ from typing import Iterable, Optional
 from .models import Dispatch, Event, NoDispatch
 from .repo import GraphRepo
 
-WS_TYPES = ("snapshot", "event", "dispatch", "no_dispatch", "drone_update", "delivered", "queue", "query_log", "zone_added", "reroute", "drone_lost", "supply_chain")
+WS_TYPES = ("snapshot", "event", "dispatch", "no_dispatch", "drone_update", "delivered", "queue", "query_log", "zone_added", "reroute", "drone_lost", "supply_chain",
+            "stock_update", "evacuation", "evac_update", "admitted")
 
 
 def msg(type_: str, data: dict) -> dict:
@@ -30,6 +31,7 @@ def snapshot(repo: GraphRepo) -> dict:
         "facilities": [f.to_dict() for f in repo.list_facilities()],
         "supply_links": [link.to_dict() for link in repo.list_supply_links()],
         "dispatches": [d.to_dict() for d in repo.list_dispatches() if d.status == "EN_ROUTE"],
+        "evacuations": [e.to_dict() for e in repo.list_evacuations() if e.status == "EN_ROUTE"],
     })
 
 
@@ -98,4 +100,33 @@ def supply_chain_msg(chain: dict, changed: Optional[dict] = None) -> dict:
     """Every launch site's current restock route (supply_chain.chain_status) and, after a site is
     destroyed or restored, which one changed: {"facility_id", "status"}."""
     return msg("supply_chain", {**chain, "changed": changed})
+
+
+def stock_update_msg(state: dict, change: Optional[dict] = None) -> dict:
+    """Launch-site and facility stock, beds, and restock shipments on the way (stock.StockKeeper.state).
+    change = {"kind", "note", ...} says what just happened: reload, order_placed, order_arrived,
+    order_lost, order_failed, kit_delivered, treated. None when sent on connect."""
+    return msg("stock_update", {**state, "change": change})
+
+
+def evacuation_msg(evac, facility_name: Optional[str], kit_eta_s: Optional[float] = None,
+                   note: Optional[str] = None, reason: Optional[str] = None) -> dict:
+    """A casualty is being evacuated (or re-routed / diverted: same person, new route).
+    evac is None when no facility can take them; reason then says why."""
+    data = evac.to_dict() if evac else {"evac_id": None}
+    return msg("evacuation", {**data, "facility_name": facility_name, "kit_eta_s": kit_eta_s,
+                              "note": note, "reason": reason, "diverted_from": None})
+
+
+def evac_update_msg(evac_id: str, person_id: str, lat: float, lon: float, phase: str, eta_s: float) -> dict:
+    """Where an evacuation is now. phase: LOADING (treated and loaded before moving) or MOVING."""
+    return msg("evac_update", {"evac_id": evac_id, "person_id": person_id, "lat": lat, "lon": lon,
+                               "phase": phase, "eta_s": round(eta_s, 1)})
+
+
+def admitted_msg(evac, facility_name: str, kit_used: dict, kit_short: dict, beds_used: int, beds: int) -> dict:
+    """The casualty arrived. kit_short is anything the facility still lacked when they got there."""
+    return msg("admitted", {"evac_id": evac.evac_id, "person_id": evac.person_id, "facility_id": evac.facility_id,
+                            "facility_name": facility_name, "kit_used": kit_used, "kit_short": kit_short,
+                            "beds_used": beds_used, "beds": beds})
 

@@ -18,7 +18,7 @@ import threading
 import time
 from typing import Optional, Protocol
 
-from .models import Depot, Dispatch, Drone, Facility, NoFlyZone, Person, SupplyLink, Unit
+from .models import Depot, Dispatch, Drone, Evacuation, Facility, NoFlyZone, Person, SupplyLink, Unit
 from .seed import SeedData, load_seed
 
 
@@ -44,6 +44,10 @@ class GraphRepo(Protocol):
     def set_facility_status(self, facility_id: str, status: str) -> None:
         """OPERATIONAL or DESTROYED. A destroyed site drops out of every supply path."""
         ...
+    def adjust_stock(self, node_id: str, delta: dict[str, int]) -> dict[str, int]:
+        """Add (or, with negative numbers, take) stock at a launch site or facility. Never goes
+        below zero. Returns the node's new stock for the items touched. HOOK: stock.py, evac.py."""
+        ...
     def find_resupply_sources(self, depot_id: str, items: dict[str, int]) -> list[tuple[Facility, SupplyLink]]:
         """Upstream facilities that restock `depot_id` and hold enough of `items`, fastest first."""
         ...
@@ -65,12 +69,22 @@ class GraphRepo(Protocol):
         """Record drone -> recipient (DISPATCHED_TO with eta and ts)."""
         ...
     def complete_dispatch(self, request_id: str, ts: Optional[float] = None) -> Optional[Dispatch]:
-        """Mark delivered: move items from drone payload into the recipient's stock (medics)."""
+        """Mark delivered: move items from drone payload into the recipient's stock (a medic, or a
+        hospital / aid station when the drone flew a casualty's kit ahead of them)."""
         ...
     def lose_drone(self, drone_id: str, request_id: Optional[str] = None, ts: Optional[float] = None) -> None:
         """Drone shot down / crashed: status LOST, payload written off, its dispatch (if any) marked LOST."""
         ...
     def list_dispatches(self) -> list[Dispatch]: ...
+
+    # casualty evacuation (evac.py)
+    def start_evacuation(self, evac: Evacuation) -> None:
+        """Casualty -> facility (EVACUATED_TO) and one more bed taken there."""
+        ...
+    def finish_evacuation(self, evac_id: str, status: str = "ADMITTED", ts: Optional[float] = None) -> None:
+        """ADMITTED (arrived) or DIVERTED (destination lost; the bed is given back)."""
+        ...
+    def list_evacuations(self) -> list[Evacuation]: ...
 
 
 # Plain-dict implementation: zero setup, used by tests and as the fallback (EDTH_REPO=memory).
@@ -86,6 +100,7 @@ class InMemoryRepo:
         self.facilities = {f.id: f for f in seed.facilities}
         self.supply_links = list(seed.supply_links)
         self.dispatches: dict[str, Dispatch] = {}
+        self.evacuations: dict[str, Evacuation] = {}
 
     # personnel
     def get_person(self, person_id):
@@ -139,6 +154,13 @@ class InMemoryRepo:
     def set_facility_status(self, facility_id, status):
         self.facilities[facility_id].status = status
 
+    def adjust_stock(self, node_id, delta):
+        node = self.depots.get(node_id) or self.facilities[node_id]
+        with self._lock:
+            for item, q in delta.items():
+                node.stock[item] = max(0, node.stock.get(item, 0) + int(q))
+            return {i: node.stock[i] for i in delta}
+
     # Hot path for dispatch: must stay a single pass / single query.
     def find_candidate_drones(self, items):
         return [d for d in self.drones.values()
@@ -184,6 +206,8 @@ class InMemoryRepo:
         if person is not None and person.kind == "MEDIC":
             for item, qty in disp.items.items():
                 person.stock[item] = person.stock.get(item, 0) + qty
+        elif disp.recipient_id in self.facilities:  # kit flown ahead of a casualty (evac.py)
+            self.adjust_stock(disp.recipient_id, disp.items)
         disp.status = "DELIVERED"
         return disp
 
@@ -197,6 +221,20 @@ class InMemoryRepo:
 
     def list_dispatches(self):
         return list(self.dispatches.values())
+
+    def start_evacuation(self, evac):
+        self.evacuations[evac.evac_id] = evac
+        self.facilities[evac.facility_id].beds_used += 1
+
+    def finish_evacuation(self, evac_id, status="ADMITTED", ts=None):
+        evac = self.evacuations[evac_id]
+        evac.status = status
+        if status == "DIVERTED":
+            f = self.facilities[evac.facility_id]
+            f.beds_used = max(0, f.beds_used - 1)
+
+    def list_evacuations(self):
+        return list(self.evacuations.values())
 
 
 # HOOK: main.py builds its repo here. EDTH_REPO=turing needs `turingdb start -demon -in-memory`.
