@@ -47,29 +47,43 @@ from .supply_chain import chain_status
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
 TICK_S = 0.5  # TUNE: how often drones move on the map (contract says about 2 updates per second)
 AUTO_EVACUATE = True  # TUNE: every casualty event also starts an evacuation (evac.py)
+# TUNE: drones deliver to medics only. A CASUALTY event sets the soldier's status (shown on the map) and
+# starts their evacuation; the squad medic treats them and asks for a restock (LOW_STOCK) if short.
+CASUALTY_DRONES = False
 # TUNE: map background. Tiles are cached under frontend/tiles/{z}/{x}/{y}.png; anything missing is
 # fetched once from TILE_UPSTREAM and saved. scripts/fetch_tiles.py fills the cache for offline use.
 TILE_DIR = Path(os.environ.get("EDTH_TILE_DIR", FRONTEND / "tiles"))
 TILE_UPSTREAM = os.environ.get("EDTH_TILE_UPSTREAM", "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png")
 
 # DEMO: the scripted scenario behind the "Run demo scenario" button. (seconds after start, event).
-# Story: a critical casualty, then one that forces a detour round the EW jamming zone, then two
-# requests at the same instant (they get different drones), a new threat that forces a drone
-# already in the air to change course, then a burst that exhausts the drones so
-# the triage queue fills and drains as drones come home.
+# Story: casualties come in and each squad medic calls for a restock with its urgency (drones deliver
+# to medics only; a casualty report sets the soldier's status and starts their evacuation, which leaves
+# once the medic has treated them). One restock forces a detour round the EW jamming zone, two land at
+# the same instant (different drones), a new threat makes a drone in the air change course, a drone is
+# shot down and its delivery retried, and a non-urgent restock waits in the queue for a drone coming
+# home. Then the forward hub and the Role 2 hospital are hit.
 DEMO_SCRIPT = [
     (0.0, {"type": "CASUALTY", "subject_id": "sol-03", "severity": "CRITICAL"}),
+    (1.0, {"type": "LOW_STOCK", "subject_id": "med-1", "items": {"blood_oneg": 2, "tourniquet": 1},
+           "urgency": "CRITICAL"}),
     (5.0, {"type": "CASUALTY", "subject_id": "sol-10", "severity": "CRITICAL"}),
+    (5.5, {"type": "LOW_STOCK", "subject_id": "med-2", "items": {"blood_oneg": 2}, "urgency": "CRITICAL"}),
     (7.0, {"type": "THREAT"}),  # DEMO: new threat on FALCON 1's path; it reroutes mid-flight
-    (10.0, {"type": "LOW_STOCK", "subject_id": "med-2", "items": {"blood_oneg": 2}}),
     (10.0, {"type": "CASUALTY", "subject_id": "sol-15", "severity": "WOUNDED"}),
+    (10.0, {"type": "LOW_STOCK", "subject_id": "med-3", "items": {"chest_seal": 2}, "urgency": "URGENT"}),
     (16.0, {"type": "CASUALTY", "subject_id": "sol-16", "severity": "CRITICAL"}),
-    (19.0, {"type": "DRONE_LOST", "drone_id": "drn-01"}),  # DEMO: HAWK 1 shot down on its way to BADGER 2-4
+    (16.5, {"type": "LOW_STOCK", "subject_id": "med-3", "items": {"blood_oneg": 2, "hemostatic_gauze": 1},
+            "urgency": "CRITICAL"}),
+    (19.0, {"type": "DRONE_LOST", "drone_id": "drn-01"}),  # DEMO: HAWK 1 shot down on its way to a medic
     (22.0, {"type": "CASUALTY", "subject_id": "sol-05", "severity": "CRITICAL"}),
+    (22.5, {"type": "LOW_STOCK", "subject_id": "med-1", "items": {"hemostatic_gauze": 2, "tourniquet": 1},
+            "urgency": "URGENT"}),
     (23.0, {"type": "CASUALTY", "subject_id": "sol-12", "severity": "WOUNDED"}),
+    (23.5, {"type": "LOW_STOCK", "subject_id": "med-2", "items": {"chest_seal": 1, "morphine_autoinjector": 2},
+            "urgency": "NON_URGENT"}),
     (27.0, {"type": "SITE", "facility_id": "dc-02", "status": "DESTROYED"}),  # DEMO: forward hub hit
     # DEMO: the Role 2 hospital is hit with CRITICAL casualties on the way: they divert to the Role 3 hours
-    # away, and a forward surgical team is suggested. Press Deploy on the map to set it up (resilience.py).
+    # away, and a forward surgical team is suggested. Press "Send team" on the map (resilience.py).
     (32.0, {"type": "SITE", "facility_id": "hos-01", "status": "DESTROYED"}),
 ]
 
@@ -227,6 +241,17 @@ async def process(raw: dict, received_perf: float) -> dict:
         return await add_threat({k: v for k, v in raw.items() if k != "type"} or dict(DEMO_THREAT))
     event = _complete(raw)
     await broadcast(event_msg(event, time.time()))
+    if event.type == "CASUALTY" and not CASUALTY_DRONES:
+        world.engine.record(None, event)  # status only: CRITICAL / WOUNDED
+        msgs = []
+        if AUTO_EVACUATE and event.severity:
+            person = world.repo.get_person(event.subject_id)
+            if person is not None and person.kind == "SOLDIER":
+                msgs = world.evac.start(person, event.severity)  # treated by the squad medic, then by road
+        for m in msgs:
+            await broadcast(m)
+        return {"request_id": event.event_id, "subject_id": event.subject_id, "status": event.severity,
+                "evacuation": msgs[0]["data"] if msgs else None}
     with querylog.capture() as decide_q:
         result = world.engine.handle(event, received_perf)  # the timed decision
     await broadcast(dispatch_msg(result) if isinstance(result, Dispatch) else no_dispatch_msg(result))

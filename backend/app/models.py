@@ -25,7 +25,12 @@ EventType = Literal["CASUALTY", "LOW_STOCK"]
 Severity = Literal["CRITICAL", "WOUNDED"]
 
 # TUNE: queue order when drones are busy (dispatch.py). Lower number = served first.
-TRIAGE_PRIORITY = {"CRITICAL": 0, "WOUNDED": 1, "LOW_STOCK": 2}
+TRIAGE_PRIORITY = {"CRITICAL": 0, "WOUNDED": 2, "LOW_STOCK": 4}
+# TUNE: a medic's restock request says how soon they need it (LOW_STOCK `urgency`). A CRITICAL restock
+# (about to run out with casualties on their hands) goes ahead of WOUNDED casualties; URGENT after them;
+# NON_URGENT (the default) last. CRITICAL and URGENT also get a drone loaded to order (dispatch.py).
+RESTOCK_PRIORITY = {"CRITICAL": 1, "URGENT": 3, "NON_URGENT": 4}
+Urgency = Literal["CRITICAL", "URGENT", "NON_URGENT"]
 
 
 @dataclass
@@ -155,6 +160,7 @@ class Event:
     ts: float
     severity: Optional[Severity] = None  # CASUALTY only
     items: dict[str, int] = field(default_factory=dict)  # LOW_STOCK: what is needed
+    urgency: Optional[Urgency] = None  # LOW_STOCK only: CRITICAL / URGENT / NON_URGENT (None = NON_URGENT)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Event":
@@ -167,12 +173,15 @@ class Event:
             ts=float(d["ts"]),
             severity=d.get("severity"),
             items={k: int(v) for k, v in (d.get("items") or {}).items()},
+            urgency=(d.get("urgency") or "").upper().replace("-", "_") or None,
         )
 
     # Triage level used by the dispatch queue (see TRIAGE_PRIORITY).
     @property
     def priority(self) -> int:
-        return TRIAGE_PRIORITY[self.severity if self.type == "CASUALTY" else "LOW_STOCK"]
+        if self.type == "CASUALTY":
+            return TRIAGE_PRIORITY[self.severity]
+        return RESTOCK_PRIORITY.get(self.urgency or "NON_URGENT", TRIAGE_PRIORITY["LOW_STOCK"])
 
     def to_dict(self) -> dict:
         return asdict(self)

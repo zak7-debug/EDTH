@@ -81,6 +81,7 @@ class StockKeeper:
         self.speed = speed
         self.orders: dict[str, RestockOrder] = {}
         self._ids = itertools.count(1)
+        self.outbox: list[dict] = []  # messages from callers that can't broadcast (dispatch.py); sent by step()
 
     # ---------------------------------------------------------------------------------------
     # Drones reloading
@@ -143,6 +144,27 @@ class StockKeeper:
         return [self.message("order_placed", f"{names[depot_id]} low: ordered {_fmt(items)} via {via}, "
                                              f"{order.minutes:.0f} min", depot_id=depot_id, order_id=order.order_id)]
 
+    def order(self, depot_id: str, items: dict[str, int], note_for: Optional[str] = None) -> Optional[str]:
+        """Order `items` to a launch site for a medic's restock (dispatch.py). Topped up to the usual
+        reorder level while it's at it. Returns the order id, or None if no chain holds them."""
+        depot = next(d for d in self.repo.list_depots() if d.id == depot_id)
+        want = {i: max(q, REORDER_UP_TO - depot.stock.get(i, 0)) for i, q in items.items()}
+        msgs = self._place(depot_id, want)
+        self.outbox += msgs
+        placed = [m for m in msgs if (m["data"]["change"] or {}).get("kind") == "order_placed"]
+        return placed[0]["data"]["change"]["order_id"] if placed else None
+
+    def inbound(self, items: dict[str, int]) -> list[dict]:
+        """Shipments on the way to a launch site that bring at least `items` (with what's there already)."""
+        now, depots = self.clock(), {d.id: d for d in self.repo.list_depots()}
+        out = []
+        for o in self.orders.values():
+            d = depots.get(o.depot_id)
+            if o.status == "IN_TRANSIT" and d and all(d.stock.get(i, 0) + o.items.get(i, 0) >= q for i, q in items.items()):
+                out.append({"order_id": o.order_id, "depot_id": o.depot_id,
+                            "remaining_min": max(0.0, o.minutes - o.elapsed_min(now, self.speed))})
+        return out
+
     def send(self, target_id: str, items: dict[str, int], path: dict, kind: str = "RESTOCK",
              take_from_source: bool = True, note: Optional[str] = None) -> list[dict]:
         """Send `items` down a chain already planned (supply_chain.best_path shape) to any site.
@@ -160,7 +182,8 @@ class StockKeeper:
 
     def step(self) -> list[dict]:
         """Deliver every shipment whose lead time has passed. HOOK: the tick loop calls this."""
-        now, out = self.clock(), []
+        now, out = self.clock(), self.outbox
+        self.outbox = []
         for o in list(self.orders.values()):
             if o.status == "IN_TRANSIT" and o.elapsed_min(now, self.speed) >= o.minutes:
                 o.status = "DELIVERED"

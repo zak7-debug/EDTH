@@ -21,7 +21,7 @@ from __future__ import annotations
 import heapq
 from typing import Optional
 
-from . import resilience
+from . import resilience, roads
 from .models import Depot, Facility, SupplyLink
 
 # TUNE: the standard restock order a launch site asks for. A source must hold all of it.
@@ -79,4 +79,7 @@ def chain_status(repo, items: Optional[dict[str, int]] = None) -> dict:
                    for d in depots],
         # Where to put a temporary stand-in for each destroyed site (resilience.py). Empty when nothing is down.
         "suggestions": resilience.suggestions(repo, facilities, depots, links, items),
+        # Road waypoints for in-sector truck legs (roads.py), so the map draws trucks along roads.
+        "road_legs": roads.truck_legs({**{d.id: d for d in depots}, **{f.id: f for f in facilities}}, links,
+                                      repo.list_no_fly_zones()),
     }

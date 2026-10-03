@@ -6,6 +6,13 @@ How it fits the product:
   graph. Writes come after the broadcast so they never sit on the latency path.
 - When a drone is back at a launch site, the API calls `engine.drone_freed(drone_id)`, which
   releases it and serves the triage queue first (CRITICAL, then WOUNDED, then LOW_STOCK).
+- A medic's restock (LOW_STOCK) always ends with a drone on its way, now or later. It carries an
+  urgency: CRITICAL, URGENT or NON_URGENT (models.RESTOCK_PRIORITY sets its place in the queue).
+  If no free drone already carries the items, a CRITICAL or URGENT restock gets an idle drone loaded
+  to order at the launch site that holds them (`_load_to_order`); a NON_URGENT one waits for a drone
+  coming home, unless none carries the items at all. If no launch site holds the items, a restock
+  shipment is ordered to the launch site that can serve the medic soonest (or one already on its way
+  is used), the request waits in the queue, and the medic is told the ETA. It flies when it lands.
 - Routing is pluggable: `route_fn(a, b) -> (points, metres)`. The default is routing.Router, an A*
   around the graph's no-fly / threat zones; pass `route_fn=straight_line` to switch it off.
 
@@ -51,6 +58,8 @@ RANGE_SAFETY = 1.2
 # TUNE: seconds to swap a battery and reload at a launch site. Only used for the
 # "nearest alternative" suggestion when no drone can go right now.
 RELOAD_S = 120.0
+# TUNE: restock urgencies that get a drone loaded to order instead of waiting for one coming home.
+LOAD_TO_ORDER = ("CRITICAL", "URGENT")
 
 
 def haversine_m(a: Point, b: Point) -> float:
@@ -110,6 +119,8 @@ class DispatchEngine:
         self._depots: list[Depot] = repo.list_depots()  # launch sites don't move: cache once
         self._events: dict[str, Event] = {}  # request_id -> event, for retries after a drone is lost
         self._retries = itertools.count(1)
+        self.stock = None  # HOOK: the StockKeeper (flights.FlightTracker sets it), for restocking launch sites
+        self._awaiting: dict[str, dict] = {}  # request_id -> restock shipment it waits for (order_id, eta)
 
     # ---------------------------------------------------------------------------------------
     # Public API: what the backend calls
@@ -125,6 +136,8 @@ class DispatchEngine:
         self._events[event.event_id] = event  # kept so a lost drone's request can be retried
         items = needed_items(event, self.repo)
         result = self._try_dispatch(event, items, t0)
+        if isinstance(result, NoDispatch) and event.type == "LOW_STOCK":
+            return self._restock(event, items, result, t0)
         if isinstance(result, NoDispatch) and result.reason_code == "ALL_BUSY":
             # A suitable drone exists but is out on a job: wait for it rather than give up.
             self._enqueue(event, items)
@@ -155,7 +168,10 @@ class DispatchEngine:
         still_waiting = []
         for q in waiting:
             result = self._try_dispatch(q.event, q.items, time.perf_counter())
+            if isinstance(result, NoDispatch) and q.event.type == "LOW_STOCK":
+                result = self._load_to_order(q.event, q.items, time.perf_counter()) or result
             if isinstance(result, Dispatch):
+                self._awaiting.pop(q.event.event_id, None)
                 served.append(result)
             else:
                 still_waiting.append(q)
@@ -285,9 +301,127 @@ class DispatchEngine:
                                 f"in {p['minutes']:.0f} min"}
         return best
 
+    # ---------------------------------------------------------------------------------------
+    # Medic restocks: always end with a drone on its way
+    # ---------------------------------------------------------------------------------------
+
+    def _restock(self, event: Event, items: dict[str, int], first: NoDispatch, t0: float) -> Union[Dispatch, NoDispatch]:
+        """No free drone carries the items. Load one to order, or wait for one, or restock a launch site."""
+        urgency = event.urgency or "NON_URGENT"
+        if urgency in LOAD_TO_ORDER or first.reason_code != "ALL_BUSY":
+            loaded = self._load_to_order(event, items, t0)
+            if loaded:
+                return loaded
+        self._enqueue(event, items)
+        pos = self.queue_position(event.event_id)
+        stocked = [d for d in self.repo.list_depots() if all(d.stock.get(i, 0) >= q for i, q in items.items())]
+        if stocked:  # the items are at a launch site: the next drone home there (or anywhere) loads them
+            first.reason = f"{first.reason}; queued ({urgency.lower().replace('_', '-')}, position {pos}): " \
+                           f"the first drone free at {' or '.join(d.name for d in stocked)} is loaded with them"
+            first.reason_code = "ALL_BUSY"
+            return first
+        plan = self._stock_eta(event, items)
+        if plan is None:
+            first.reason = f"{first.reason}; queued (position {pos}), but no working supply chain holds {_fmt(items)}"
+            first.reason_code = "NO_STOCK"
+            return first
+        self._awaiting[event.event_id] = plan
+        return NoDispatch(
+            request_id=event.event_id, recipient_id=event.subject_id, reason_code="AWAITING_STOCK",
+            reason=f"no launch site holds {_fmt(items)}: {plan['note']}. Queued ({urgency.lower().replace('_', '-')}, "
+                   f"position {pos}); a drone takes off when the shipment lands",
+            nearest_alternative={"drone_id": None, "eta_s": plan["eta_s"], "via_depot": plan["depot_id"],
+                                 "order_id": plan["order_id"], "note": plan["note"]},
+            latency_ms=round((time.perf_counter() - t0) * 1000, 2))
+
+    def _load_to_order(self, event: Event, items: dict[str, int], t0: float) -> Optional[Dispatch]:
+        """An idle drone at a launch site that holds the items is loaded with them and sent (fastest first).
+        Anything else it carries goes back on the shelf if it needs the room."""
+        target = (event.lat, event.lon)
+        depots = {d.id: d for d in self.repo.list_depots()
+                  if all(d.stock.get(i, 0) >= q for i, q in items.items())}
+        need = sum(items.values())
+        options = []
+        for d in self.repo.list_drones():
+            if d.status != "IDLE" or d.claimed_by or d.depot_id not in depots or d.capacity < need:
+                continue
+            route, dist, eta, ok = self._plan(replace(d, range_m=d.max_range_m), target)  # fresh battery while loading
+            if ok:
+                options.append((eta + RELOAD_S, d, route, dist))
+        for eta, d, route, dist in sorted(options, key=lambda o: o[0]):
+            if not self.repo.claim_drone(d.id, event.event_id):
+                continue
+            payload = {i: q for i, q in d.payload.items() if q}
+            room = d.capacity - sum(payload.values())
+            for i in sorted(payload, key=lambda i: i in items):  # shelve what isn't needed first
+                if room >= need:
+                    break
+                back = payload.pop(i)
+                self.repo.adjust_stock(d.depot_id, {i: back})
+                room += back
+            self.repo.adjust_stock(d.depot_id, {i: -q for i, q in items.items()})
+            new = {i: payload.get(i, 0) + items.get(i, 0) for i in set(payload) | set(items)}
+            self.repo.update_drone(d.id, range_m=d.max_range_m, payload={**{i: 0 for i in d.payload}, **new})
+            if self.stock is not None:
+                self.stock.outbox.append(self.stock.message(
+                    "loaded_to_order", f"{d.callsign} loaded {_fmt(items)} at {depots[d.depot_id].name} for a "
+                    f"{(event.urgency or 'NON_URGENT').lower().replace('_', '-')} restock", depot_id=d.depot_id,
+                    drone_id=d.id))
+            return Dispatch(
+                request_id=event.event_id, drone_id=d.id, recipient_id=event.subject_id, items=items,
+                eta_s=round(eta, 1), distance_m=round(dist, 1), route=route,
+                latency_ms=round((time.perf_counter() - t0) * 1000, 2), ts=self.clock())
+        return None
+
+    def _stock_eta(self, event: Event, items: dict[str, int]) -> Optional[dict]:
+        """No launch site holds the items: use a shipment already on its way that brings them, or order one
+        to the launch site that can serve this medic soonest. Returns {depot_id, order_id, eta_s, note}
+        (eta_s in mission seconds: shipment, loading, then the flight)."""
+        if self.stock is None:
+            return None
+        target = (event.lat, event.lon)
+        depots = {d.id: d for d in self.repo.list_depots()}
+        drones = [d for d in self.repo.list_drones() if d.status != "LOST" and d.capacity >= sum(items.values())]
+
+        def fly_s(dep):
+            speeds = [d.speed_mps for d in drones if d.depot_id == dep.id] or [d.speed_mps for d in drones] or [20.0]
+            return haversine_m((dep.lat, dep.lon), target) / max(speeds) + RELOAD_S
+
+        best = None
+        for o in self.stock.inbound(items):  # already coming: no second order
+            dep = depots[o["depot_id"]]
+            eta = o["remaining_min"] * 60 + fly_s(dep)
+            if best is None or eta < best[0]:
+                best = (eta, dep, o["order_id"], o["remaining_min"], False)
+        if best is None:
+            facilities, links = self.repo.list_facilities(), self.repo.list_supply_links()
+            for dep in depots.values():
+                p = best_path(dep.id, items, facilities, list(depots.values()), links)
+                if p and (best is None or p["minutes"] * 60 + fly_s(dep) < best[0]):
+                    best = (p["minutes"] * 60 + fly_s(dep), dep, None, p["minutes"], True)
+            if best is None:
+                return None
+            order_id = self.stock.order(best[1].id, items, note_for=event.subject_id)
+            if order_id is None:
+                return None
+            best = (best[0], best[1], order_id, best[3], True)
+        eta, dep, order_id, ship_min, new = best
+        what = "restocking" if new else "already being restocked"
+        note = (f"{dep.name} {what} ({_hm(ship_min)}), then a drone: about {_hm(eta / 60)} in all")
+        return {"depot_id": dep.id, "order_id": order_id, "eta_s": round(eta, 1), "note": note}
+
     def _enqueue(self, event: Event, items: dict[str, int]) -> None:
         """Add to the triage queue once (a retried event doesn't get a second place)."""
         with self._qlock:
             if any(q.event.event_id == event.event_id for q in self._queue):
                 return
             heapq.heappush(self._queue, _Queued(event.priority, event.ts, next(self._seq), event, items))
+
+
+def _fmt(items: dict[str, int]) -> str:
+    return ", ".join(f"{q} {i.replace('_', ' ')}" for i, q in items.items())
+
+
+def _hm(m: float) -> str:
+    h, mins = divmod(int(round(m)), 60)
+    return f"{h} h {mins:02d}" if h else f"{mins} min"
