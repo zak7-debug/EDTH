@@ -1,0 +1,29 @@
+# Audio geolocation defaults (README_audio_geolocation.md). TUNE here, not in code.
+
+# Spoken distance is often 20-30% off and bearing 15 degrees or more. A 15 degree error alone moves the
+# point sideways by about 0.26 x distance, so the combined error is nearer 0.35 x distance than 0.25.
+uncertainty:
+  distance_factor: 0.35   # uncertainty_m = distance_factor * distance_m + gps_error_m
+  gps_error_m: 10         # used when the device sends no accuracy
+  expand_zones: true      # no-fly / no-go radius grows by the uncertainty, so zones err on the safe side
+
+polygon:
+  vertices: 16            # corners per zone. Routing tests every corner, so more corners = slower A*
+  circumscribe: true      # polygon contains the whole circle (edges, not just corners, at >= radius)
+
+merge_within_m: 200       # a report this close to an active zone's first report merges into it
+max_report_distance_m: 20000   # reject centres further than this from the reporter
+default_distance_m: 500   # direction heard but no distance
+
+# Reports outside this box are rejected (the demo sector, with margin). (south, west, north, east)
+operating_area: [47.30, 34.60, 48.80, 36.30]
+
+types:
+  NO_FLY_ZONE:  {radius_m: 500, expires_min: 15, air: true,  ground: false, name: "Reported air threat"}
+  NO_GO_AREA:   {radius_m: 200, expires_min: 60, air: false, ground: true,  name: "No-go area"}
+  ROAD_BLOCKED: {radius_m: 50,  expires_min: 60, air: false, ground: false, name: "Road blocked", snap: road}
+  DESTINATION:  {snap: drop_point, snap_within_m: 300}
+
+# Device headings (only needed for clock positions) usually arrive magnetic. Declination in the demo
+# sector is about 8 degrees east; send "heading_ref": "true" when the device already corrects it.
+magnetic_declination_deg: 8.0

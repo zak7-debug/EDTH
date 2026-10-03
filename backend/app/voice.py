@@ -28,6 +28,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
+from .geo.parse_spatial import KILOMETRES, METRES, parse_spatial
 from .messages import voice_report_msg
 
 AUDIO_DIR = Path(__file__).resolve().parents[2] / "frontend" / "audio"
@@ -67,6 +68,21 @@ ITEM_STEMS = {
 NOT_ITEMS = ("кровотеч",)  # "кровотеча" is bleeding, not a request for blood
 NEED_STEMS = ("закінчу", "мало", "потріб", "треба", "бракує", "немає", "нема", "надішл", "need",
               "low", "running", "out", "send", "short")
+
+# Spoken map reports (geo/, README_audio_geolocation.md): a sentence with one of these and a direction
+# ("вісімсот метрів на північний схід") becomes a zone round the projected point. Checked in order.
+ZONE_INTENTS = (
+    ("ROAD_BLOCKED", ("дорог", "шлях", "міст", "road", "bridge"), ("заблок", "перекрит", "закрит", "blocked",
+                                                                  "closed", "cut")),
+    ("NO_GO_AREA", ("мін", "розтяжк", "minefield", "mines", "mined"), ()),
+    ("NO_FLY_ZONE", ("ппо", "пзрк", "перехоплюв", "шахед", "manpads", "shahed", "interceptor"), ()),
+    # "дрон" alone is usually OUR drone ("надішліть дрон"): only a hostile or closed one is a threat
+    ("NO_FLY_ZONE", ("дрон", "повітр", "drone", "airspace", "fly"),
+     ("ворож", "против", "загроз", "небезпе", "закри", "enemy", "hostile", "threat", "danger", "close", "no")),
+)
+NO_ENTRY = ("не заїжд", "не заход", "do not enter", "no go")  # "не заїжджати": a ground no-go area
+DIST_UNITS = METRES | KILOMETRES
+ENGLISH_ZONES = {"NO_FLY_ZONE": "no-fly zone", "NO_GO_AREA": "no-go area", "ROAD_BLOCKED": "road blocked"}
 
 ENGLISH_ITEMS = {"blood_oneg": "blood (O-neg)", "tourniquet": "tourniquets", "chest_seal": "chest seals",
                  "hemostatic_gauze": "haemostatic gauze", "morphine_autoinjector": "morphine"}
@@ -132,6 +148,39 @@ def _items(toks: list[str]) -> dict[str, int]:
     return items
 
 
+def _zone_intent(sentence: str, toks: list[str]) -> Optional[str]:
+    low = sentence.lower()
+    for kind, stems, also in ZONE_INTENTS:
+        if any(t.startswith(stems) for t in toks) and (not also or any(t.startswith(also) for t in toks)):
+            return kind
+    if any(cue in low for cue in NO_ENTRY):
+        return "NO_GO_AREA"
+    return None
+
+
+def _zone_events(sentences: list[str], speaker: Optional[str], callsign_ids: dict[str, str],
+                 out: ParsedReport) -> None:
+    """Zone reports: the intent's sentence and the ones after it (until the next intent) carry the
+    distance, direction and radius, e.g. "Ворожий дрон. Вісімсот метрів на північний схід. Закрити п'ятсот"."""
+    marks = [(k, _zone_intent(s, _tokens(s))) for k, s in enumerate(sentences)]
+    marks = [(k, kind) for k, kind in marks if kind]
+    for n, (k, kind) in enumerate(marks):
+        end = marks[n + 1][0] if n + 1 < len(marks) else len(sentences)
+        spatial_text = ". ".join(sentences[k:end])
+        sp = parse_spatial(spatial_text)
+        pid = callsign_ids.get(speaker or "")
+        if pid is None:
+            out.unparsed.append(f"{ENGLISH_ZONES[kind]} reported but no callsign heard to place it from")
+        elif sp.bearing_deg is None:
+            out.unparsed.append(f"{ENGLISH_ZONES[kind]}: {'; '.join(sp.reasons)}, not placed (ask for a direction)")
+        else:
+            ev = {"type": kind, "subject_id": pid, "callsign": speaker, "distance_m": sp.distance_m,
+                  "bearing_deg": sp.bearing_deg, "assumptions": sp.assumptions, "text": spatial_text}
+            if sp.radius_m is not None:
+                ev["radius_m"] = sp.radius_m
+            out.events.append(ev)
+
+
 def parse_report(text: str, callsign_ids: dict[str, str]) -> ParsedReport:
     """Turn one radio report into partial events. callsign_ids maps "BADGER 2-4" -> "sol-10".
 
@@ -142,15 +191,18 @@ def parse_report(text: str, callsign_ids: dict[str, str]) -> ParsedReport:
     start = time.perf_counter()
     out = ParsedReport()
     speaker: Optional[str] = None  # the medic's callsign
-    for sentence in filter(None, (s.strip() for s in re.split(r"[.!?;\n]+", text))):
+    sentences = [s for s in (s.strip() for s in re.split(r"[.!?;\n]+", text)) if s]
+    for sentence in sentences:
         toks = _tokens(sentence)
+        # "трьохсот метрів" is a distance, not "300" (wounded): drop numbers followed by a unit
+        sev_toks = [t for i, t in enumerate(toks) if not (i + 1 < len(toks) and toks[i + 1] in DIST_UNITS)]
         calls = _callsigns(toks)
         for _, cs in calls:
             if speaker is None and not re.search(r"-\d+$", cs):
                 speaker = cs if cs.endswith("-DOC") else f"{cs}-DOC"
         soldiers = [cs for _, cs in calls if re.search(r"-\d+$", cs)]
         severity = next((sev for sev, stems in SEVERITY_STEMS.items()
-                         if any(t.startswith(stems) for t in toks)), None)
+                         if any(t.startswith(stems) for t in sev_toks)), None)
         items = _items(toks)
         needs = any(t.startswith(NEED_STEMS) for t in toks)
 
@@ -172,6 +224,7 @@ def parse_report(text: str, callsign_ids: dict[str, str]) -> ParsedReport:
                 out.unparsed.append(f"supplies requested but no medic callsign heard: {sentence}")
             else:
                 out.events.append({"type": "LOW_STOCK", "subject_id": pid, "items": items, "callsign": medic})
+    _zone_events(sentences, speaker, callsign_ids, out)
     if not out.events and not out.unparsed:
         out.unparsed.append("no casualty or supply request heard")
     out.english = english_summary(out.events)
@@ -185,6 +238,10 @@ def english_summary(events: list[dict]) -> str:
         extra = ", ".join(f"{q} x {ENGLISH_ITEMS.get(k, k)}" for k, q in e.get("items", {}).items())
         if e["type"] == "CASUALTY":
             parts.append(f"{e['callsign']} is {e['severity']}" + (f", needs {extra}" if extra else ""))
+        elif e["type"] in ENGLISH_ZONES:
+            r = f", radius {e['radius_m']:.0f} m" if e.get("radius_m") else ""
+            parts.append(f"{e['callsign']} reports {ENGLISH_ZONES[e['type']]} {e['distance_m']:.0f} m at "
+                         f"{e['bearing_deg']:.0f} degrees{r}")
         else:
             parts.append(f"{e['callsign']} is running low: needs {extra}")
     return ". ".join(parts) + ("." if parts else "")

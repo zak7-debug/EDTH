@@ -53,8 +53,10 @@ def _jitter(i: int, j: int) -> tuple[float, float]:
 
 
 class RoadNet:
-    def __init__(self, zones: Iterable[NoFlyZone] = ()):
+    def __init__(self, zones: Iterable[NoFlyZone] = (), blocked_edges: Iterable[tuple[Point, Point]] = ()):
         self.zones = list(zones)
+        # HOOK: geo/ road blockages: segments closed by a spoken report, as their two end points
+        self.blocked = {frozenset((tuple(a), tuple(b))) for a, b in blocked_edges}
         self.router = Router(self.zones)
         s, w, n, e = BBOX
         self.dlat = TRACK_M / 110_540.0
@@ -72,7 +74,7 @@ class RoadNet:
         for (i, j), p in self.nodes.items():
             for (ni, nj), road in (((i, j + 1), i % ROAD_EVERY == 0), ((i + 1, j), j % ROAD_EVERY == 0)):
                 q = self.nodes.get((ni, nj))
-                if q is None or not self.router.clear(p, q):
+                if q is None or not self.router.clear(p, q) or frozenset((p, q)) in self.blocked:
                     continue
                 m = haversine_m(p, q)
                 sec = m / ((ROAD_KMH if road else TRACK_KMH) / 3.6)
@@ -202,8 +204,10 @@ class RealRoadNet:
 
     CELL = 0.02  # degrees: spatial index cell for finding the roads near a point
 
-    def __init__(self, data: dict, zones: Iterable[NoFlyZone] = ()):
+    def __init__(self, data: dict, zones: Iterable[NoFlyZone] = (),
+                 blocked_edges: Iterable[tuple[Point, Point]] = ()):
         self.zones = list(zones)
+        self.blocked = {frozenset((tuple(a), tuple(b))) for a, b in blocked_edges}  # HOOK: geo/ road blockages
         self.router = Router(self.zones)
         self.nodes: list[Point] = [tuple(p) for p in data["nodes"]]
         lats, lons = [p[0] for p in self.nodes], [p[1] for p in self.nodes]
@@ -218,6 +222,8 @@ class RealRoadNet:
             mps = KIND_KMH.get(kind, TRACK_KMH) / 3.6
             for a, b in zip(ids, ids[1:]):
                 p, q = self.nodes[a], self.nodes[b]
+                if self.blocked and frozenset((p, q)) in self.blocked:
+                    continue
                 if any(min(p[0], q[0]) <= n and max(p[0], q[0]) >= s and min(p[1], q[1]) <= e
                        and max(p[1], q[1]) >= w for s, w, n, e in boxes) and not self.router.clear(p, q):
                     continue
@@ -322,17 +328,27 @@ def real_roads() -> Optional[dict]:
 
 _nets: dict[tuple, "RoadNet | RealRoadNet"] = {}
 _legs: dict[tuple, list[list[float]]] = {}
+# HOOK: ground-only constraints from spoken reports (geo/): no-go areas close roads but not the air,
+# and blocked road segments close just that segment. Set by geo/api.py; every net_for() applies them.
+_ground: dict[str, list] = {"zones": [], "edges": []}
+
+
+def set_ground_constraints(zones: list[NoFlyZone], edges: list[tuple[Point, Point]]) -> None:
+    _ground["zones"], _ground["edges"] = list(zones), list(edges)
 
 
 def net_for(zones: list[NoFlyZone]):
-    """One road network per set of threat zones (built once): the real roads if downloaded, else the
-    invented lattice."""
+    """One road network per set of threat zones and ground constraints (built once): the real roads if
+    downloaded, else the invented lattice."""
     data = real_roads()
-    key = (id(data), tuple(sorted((z.id, tuple(map(tuple, z.polygon))) for z in zones)))
+    zones = list(zones) + _ground["zones"]
+    edges = _ground["edges"]
+    key = (id(data), tuple(sorted((z.id, tuple(map(tuple, z.polygon))) for z in zones)),
+           tuple(sorted(tuple(sorted(e)) for e in edges)))
     if key not in _nets:
-        _nets.clear()  # zones only ever grow during a run: keep just the current network
+        _nets.clear()  # keep just the current network
         _legs.clear()
-        _nets[key] = RealRoadNet(data, zones) if data else RoadNet(zones)
+        _nets[key] = RealRoadNet(data, zones, edges) if data else RoadNet(zones, edges)
     return _nets[key]
 
 

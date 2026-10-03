@@ -37,6 +37,7 @@ from .dispatch import DispatchEngine
 from .evac import EvacTracker
 from .flights import FlightTracker
 from . import blocks, querylog, resilience, tiles, voice
+from .geo import api as geo_api
 from .messages import (dispatch_msg, event_msg, no_dispatch_msg, query_log_msg, queue_msg, snapshot,
                        drone_lost_msg, supply_chain_msg, zone_added_msg)
 from .models import Dispatch, Event, NoFlyZone
@@ -108,6 +109,7 @@ class World:
     def __init__(self):
         blocks.BLOCKS.clear()  # road and rail blocks belong to one run (blocks.py)
         self.repo = get_repo()  # HOOK: EDTH_REPO=turing|memory picks the store
+        self.geo = geo_api.new_service()  # zones from spoken reports (geo/); first: clears last run's road blocks
         self.engine = DispatchEngine(self.repo)  # routes round threat zones by default
         self.stock = StockKeeper(self.repo)  # launch-site stock and restock orders
         self.tracker = FlightTracker(self.engine, stock=self.stock)
@@ -238,6 +240,8 @@ async def process(raw: dict, received_perf: float) -> dict:
         return await set_site(raw["facility_id"], raw.get("status", "DESTROYED"))
     if raw.get("type") == "DRONE_LOST":  # DEMO: scripted losses share the event timeline
         return await lose_drone(raw["drone_id"])
+    if raw.get("type") in geo_api.GEO_TYPES:  # spoken position -> zone / destination (geo/)
+        return await geo_api.handle_event(raw)
     if raw.get("type") == "THREAT":  # DEMO: scripted threats share the event timeline
         return await add_threat({k: v for k, v in raw.items() if k != "type"} or dict(DEMO_THREAT))
     event = _complete(raw)
@@ -348,6 +352,7 @@ async def _tick_loop():
             w = world  # a reset mid-tick swaps the world; finish this tick on the old one
             for m in w.tracker.step(now - last) + w.evac.step(now - last):  # flights, shipments, evacuations
                 await broadcast(m)
+            await geo_api.expire_due(w)  # spoken-report zones past their expiry
         except Exception as e:  # never let one bad tick kill the loop mid-demo
             print("tick error:", e)
         last = now
@@ -395,6 +400,7 @@ app.include_router(resilience.router)
 app.include_router(voice.router)
 app.include_router(tiles.router)  # satellite, roads and place-name map layers
 app.include_router(blocks.router)  # road and rail blocks: trucks, ambulances and trains reroute
+app.include_router(geo_api.router)  # GET / DELETE /zones (audio geolocation)
 
 # Anything else under frontend/ (mock/snapshot.json, assets). Mounted last so the API routes win.
 app.mount("/", StaticFiles(directory=FRONTEND), name="frontend")

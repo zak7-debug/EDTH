@@ -105,3 +105,14 @@ def test_supply_chain(repo):
     assert [f.id for f, _ in repo.find_resupply_sources("dep-03", {"blood_oneg": 2})] == ["hos-01", "dc-02"]
     assert [f.id for f, _ in repo.find_resupply_sources("dep-03", {"blood_oneg": 2, "chest_seal": 2})] == ["dc-02"]
     assert repo.find_resupply_sources("dep-03", {"blood_oneg": 99}) == []
+
+
+def test_remove_no_fly_zone(repo):
+    from backend.app.models import NoFlyZone
+    zone = NoFlyZone("geo-nfz-test", "Reported air threat", [(47.6, 35.6), (47.61, 35.6), (47.61, 35.61)])
+    repo.add_no_fly_zone(zone)
+    assert "geo-nfz-test" in {z.id for z in repo.list_no_fly_zones()}
+    repo.remove_no_fly_zone("geo-nfz-test")
+    repo.remove_no_fly_zone("geo-nfz-test")  # removing twice is a no-op
+    ids = {z.id for z in repo.list_no_fly_zones()}
+    assert "geo-nfz-test" not in ids and {"nfz-1", "nfz-2"} <= ids

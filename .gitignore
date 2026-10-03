@@ -6,3 +6,5 @@ __pycache__/
 scratch/
 .DS_Store
 frontend/tiles/
+.geo-backup/
+*.geo-new

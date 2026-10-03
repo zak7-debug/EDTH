@@ -82,3 +82,15 @@ def test_speaker_callsign_in_ukrainian(monkeypatch):
         assert [(e["type"], e["subject_id"]) for e in r["events"]] == [("LOW_STOCK", "med-1")]
         assert r["transcript"] == body["text"]  # shown as heard; the speaker isn't added to it
         assert client.post("/voice/text", json={"text": body["text"]}).json()["events"] == []
+
+
+def test_ukrainian_threat_clip_is_a_no_fly_zone():
+    r = parse_report(_clip("badger2-threat-uk"), _ids())
+    assert [(e["type"], e["subject_id"]) for e in r.events] == [("NO_FLY_ZONE", "med-2")]
+    e = r.events[0]
+    assert (e["distance_m"], e["bearing_deg"], e["radius_m"]) == (800, 45, 500)
+
+
+def test_asking_for_a_drone_is_not_a_threat():
+    r = parse_report("Борсук один, медик. Надішліть дрон, потрібно два турнікети.", _ids())
+    assert [e["type"] for e in r.events] == ["LOW_STOCK"] and r.unparsed == []
