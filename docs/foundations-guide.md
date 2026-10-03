@@ -214,3 +214,16 @@ Each query shows its milliseconds and row count; click one to see the full text.
 
 **To change:** move or resize `DEMO_THREAT`, or edit the `(7.0, {"type": "THREAT"})` line in `DEMO_SCRIPT`. There is no range re-check after a detour (a `TUNE` note in `reroute`); the 1.2 safety margin covers demo-sized detours. The stored `DISPATCHED_TO.route_json` keeps the original route.
 
+## 14. Drone shot down (`POST /losses`, `engine.drone_lost`)
+
+**What happens:** when a drone is reported lost, five things follow in order:
+1. The tracker takes it out of the air where it is (`tracker.lose`).
+2. The graph marks it `LOST` with every item on board written off, and its `DISPATCHED_TO` edge becomes `LOST` (`repo.lose_drone`).
+3. The loss spot becomes a 600 m threat zone, so nothing else flies into the same fire. Drones already flying nearby reroute.
+4. If it was carrying someone's supplies, the request is retried at once as `<id>-r1` with the original timestamp. It gets the next-best drone, or if none is free it goes to the front of its triage level in the queue.
+5. The dashboard greys the drone out and shows "HAWK 1 shot down on its way to BADGER 2-4. Re-sending the supplies."
+
+**How to trigger it:** use the **Shot down** row in the trigger panel, call `POST /losses {"drone_id"}`, or watch the demo scenario, where HAWK 1 is lost at 19 s and BADGER 2-4 is served first when FALCON 1 comes home.
+
+**To change:** `LOSS_THREAT_RADIUS_M` in dev_server.py sets the size of the zone. A `LOST` drone never counts as busy, so a request that only a lost drone could have served gets `NO_STOCK` instead of waiting forever.
+

@@ -64,6 +64,9 @@ class GraphRepo(Protocol):
     def complete_dispatch(self, request_id: str, ts: Optional[float] = None) -> Optional[Dispatch]:
         """Mark delivered: move items from drone payload into the recipient's stock (medics)."""
         ...
+    def lose_drone(self, drone_id: str, request_id: Optional[str] = None, ts: Optional[float] = None) -> None:
+        """Drone shot down / crashed: status LOST, payload written off, its dispatch (if any) marked LOST."""
+        ...
     def list_dispatches(self) -> list[Dispatch]: ...
 
 
@@ -177,6 +180,14 @@ class InMemoryRepo:
                 person.stock[item] = person.stock.get(item, 0) + qty
         disp.status = "DELIVERED"
         return disp
+
+    def lose_drone(self, drone_id, request_id=None, ts=None):
+        with self._lock:
+            d = self.drones[drone_id]
+            d.status, d.claimed_by = "LOST", None
+            d.payload = {k: 0 for k in d.payload}  # supplies on board are gone
+            if request_id in self.dispatches:
+                self.dispatches[request_id].status = "LOST"
 
     def list_dispatches(self):
         return list(self.dispatches.values())

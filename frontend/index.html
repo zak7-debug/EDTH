@@ -139,6 +139,7 @@
         <button class="crit" data-sev="CRITICAL">Critical</button><button class="wnd" data-sev="WOUNDED">Wounded</button></div>
       <div class="row"><select id="medicSel"></select><select id="itemSel"></select>
         <input id="qty" type="number" min="1" value="2"><button id="lowBtn">Low stock</button></div>
+      <div class="row"><select id="droneSel"></select><button class="crit" id="lostBtn">Shot down</button></div>
     </section>
     <section id="queue"><h2>Waiting for a drone</h2><div class="empty">Nobody waiting</div></section>
     <section id="queries"><h2>Graph queries (last request)</h2><div class="empty">None yet</div></section>
@@ -154,7 +155,7 @@
 const API = location.protocol === 'file:' ? 'http://localhost:8000' : location.origin;
 const WS_URL = API.replace(/^http/, 'ws') + '/ws';
 const STATUS_COLOUR = { OK: '#3fb950', WOUNDED: '#f0b429', CRITICAL: '#f85149' };  // TUNE: soldier colours
-const DRONE_COLOUR = { IDLE: '#8b949e', EN_ROUTE: '#39d0d8', RETURNING: '#d2a8ff', CHARGING: '#f0b429' };  // TUNE
+const DRONE_COLOUR = { IDLE: '#8b949e', EN_ROUTE: '#39d0d8', RETURNING: '#d2a8ff', CHARGING: '#f0b429', LOST: '#f85149' };  // TUNE
 const LATENCY_WINDOW = 20;   // TUNE: how many decisions the rolling average covers
 const BANNER_MS = 12000;     // TUNE: how long a no_dispatch banner stays up
 const LOG_MAX = 200;
@@ -345,6 +346,16 @@ const handlers = {
     eta[r.drone_id] = { eta: r.eta_s, at: performance.now(), rate: (eta[r.drone_id] || {}).rate || 1, req: r.request_id, status: r.phase };
     log(`<b>${esc(name(r.drone_id))}</b> rerouted round ${esc(r.zone)}: ${r.added_m >= 0 ? '+' : ''}${(r.added_m / 1000).toFixed(1)} km, ETA now ${fmtEta(r.eta_s)}`, 'reroute');
   },
+  // A drone was shot down: grey it out, drop its route, and say what happens next.
+  drone_lost(x) {
+    const d = S.drones[x.drone_id];
+    if (d) { Object.assign(d, { status: 'LOST', lat: x.lat, lon: x.lon, payload: {} }); delete eta[x.drone_id]; drawDrone(d); }
+    if (x.request_id) clearRoute(x.request_id);
+    const who = x.recipient_id ? ` on its way to ${esc(name(x.recipient_id))}` : '';
+    const next = x.recipient_id ? ' Re-sending the supplies.' : '';
+    log(`<b>${esc(name(x.drone_id))}</b> shot down${who}. Lost: ${esc(fmtItems(x.items_lost)) || 'nothing'}.${next}`, 'nod');
+    showAlert(`<b>${esc(name(x.drone_id))} shot down</b>${who}.${next}`);
+  },
   queue(q) {
     const el = document.getElementById('queue');
     el.innerHTML = '<h2>Waiting for a drone</h2>' + (q.pending.length ? q.pending.map(r =>
@@ -377,6 +388,11 @@ function log(html, cls = '', ms = null) {
 }
 
 let bannerTimer;
+function showAlert(html) {
+  const b = document.getElementById('banner');
+  b.innerHTML = html; b.style.display = 'block';
+  clearTimeout(bannerTimer); bannerTimer = setTimeout(() => b.style.display = 'none', BANNER_MS);
+}
 function showBanner(n) {
   const b = document.getElementById('banner');
   const alt = n.nearest_alternative && n.nearest_alternative.note ? `<div class="alt">Suggested: ${esc(n.nearest_alternative.note)}</div>` : '';
@@ -436,6 +452,7 @@ function fillTriggers() {
   document.getElementById('soldierSel').innerHTML = opts(people.filter(p => p.kind === 'SOLDIER'));
   document.getElementById('medicSel').innerHTML = opts(people.filter(p => p.kind === 'MEDIC'));
   const items = new Set(people.flatMap(p => Object.keys(p.stock || {})));
+  document.getElementById('droneSel').innerHTML = Object.values(S.drones).map(d => `<option value="${d.id}">${esc(d.callsign)}</option>`).join('');
   document.getElementById('itemSel').innerHTML = [...items].map(i => `<option value="${i}">${i.replace(/_/g, ' ')}</option>`).join('');
 }
 document.querySelectorAll('[data-sev]').forEach(b => b.onclick = () =>
@@ -451,6 +468,7 @@ map.on('click', e => {
   wrap.classList.remove('placing');
   post('/threats', { name: 'Reported threat', lat: e.latlng.lat, lon: e.latlng.lng, radius_m: 800 });
 });
+document.getElementById('lostBtn').onclick = () => post('/losses', { drone_id: document.getElementById('droneSel').value });
 document.getElementById('demoBtn').onclick = () => post('/scenario/demo');                       // DEMO
 document.getElementById('resetBtn').onclick = () => { document.getElementById('log').innerHTML = ''; latencies.length = 0; post('/reset'); };
 

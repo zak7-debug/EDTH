@@ -67,7 +67,7 @@ def lit(v) -> str:
 # TuringDB types each property name strictly (an Int64 property can't later be SET to a
 # Double), so numeric fields are always written with the same Python type.
 # TuringDB fixes a property's type on first write, so floats must always be written as floats.
-FLOAT_FIELDS = {"lat", "lon", "speed_mps", "range_m", "max_range_m", "last_update",
+FLOAT_FIELDS = {"lat", "lon", "speed_mps", "range_m", "max_range_m", "last_update", "lost_ts",
                 "eta_s", "distance_m", "ts", "latency_ms", "delivered_ts", "lead_time_min"}
 INT_FIELDS = {"capacity", "qty", "beds"}
 FACILITY_LABELS = {"SUPPLIER": "Supplier", "DISTRIBUTION_CENTRE": "DistributionCentre", "HOSPITAL": "Hospital"}
@@ -397,6 +397,16 @@ class TuringRepo:
 
     def release_drone(self, drone_id):
         self.update_drone(drone_id, status="IDLE", claimed_by=None)
+
+    def lose_drone(self, drone_id, request_id=None, ts=None):
+        with self._lock:
+            drone = self.get_drone(drone_id)
+            qs = [f"MATCH (d:Drone) WHERE d.id = {lit(drone_id)} SET d.status = 'LOST', d.claimed_by = ''",
+                  *self._payload_queries(drone_id, {k: 0 for k in drone.payload}, drone.payload)]
+            if request_id:
+                qs.append(f"MATCH (d:Drone)-[x:DISPATCHED_TO]->(r:Recipient) WHERE x.request_id = {lit(request_id)} "
+                          f"SET {sets('x', {'status': 'LOST', 'lost_ts': ts or time.time()})}")
+            self._write(self.g_logistics, qs)
 
     # Edges can't cross graphs, so the drone points at a Recipient stand-in node holding the person's id.
     def create_dispatch(self, dispatch):

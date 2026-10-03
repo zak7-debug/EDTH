@@ -5,12 +5,12 @@ The formats are frozen in contracts/messages.md; the frontend (Arnav) and the ba
 """
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Iterable, Optional
 
 from .models import Dispatch, Event, NoDispatch
 from .repo import GraphRepo
 
-WS_TYPES = ("snapshot", "event", "dispatch", "no_dispatch", "drone_update", "delivered", "queue", "query_log", "zone_added", "reroute")
+WS_TYPES = ("snapshot", "event", "dispatch", "no_dispatch", "drone_update", "delivered", "queue", "query_log", "zone_added", "reroute", "drone_lost")
 
 
 def msg(type_: str, data: dict) -> dict:
@@ -83,4 +83,13 @@ def reroute_msg(drone_id: str, request_id: str, phase: str, route: list, distanc
     return msg("reroute", {"drone_id": drone_id, "request_id": request_id, "phase": phase,
                            "route": [list(p) for p in route], "distance_m": round(distance_m, 1),
                            "eta_s": round(eta_s, 1), "added_m": round(added_m, 1), "zone": zone_name})
+
+
+def drone_lost_msg(drone_id: str, lat: float, lon: float, phase: Optional[str], request_id: Optional[str],
+                   recipient_id: Optional[str], items_lost: dict) -> dict:
+    """A drone was shot down where it was flying. If it was carrying someone's supplies, a `dispatch`
+    (or a queued `no_dispatch`) for the retry follows, with request_id = original + "-r1"."""
+    return msg("drone_lost", {"drone_id": drone_id, "lat": lat, "lon": lon, "phase": phase,
+                              "request_id": request_id, "recipient_id": recipient_id,
+                              "items_lost": items_lost})
 

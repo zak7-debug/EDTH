@@ -30,7 +30,7 @@ from .dispatch import DispatchEngine
 from .flights import FlightTracker
 from . import querylog
 from .messages import (dispatch_msg, event_msg, no_dispatch_msg, query_log_msg, queue_msg, snapshot,
-                       zone_added_msg)
+                       drone_lost_msg, zone_added_msg)
 from .models import Dispatch, Event, NoFlyZone
 from .repo import get_repo
 
@@ -49,10 +49,13 @@ DEMO_SCRIPT = [
     (10.0, {"type": "LOW_STOCK", "subject_id": "med-2", "items": {"blood_oneg": 2}}),
     (10.0, {"type": "CASUALTY", "subject_id": "sol-15", "severity": "WOUNDED"}),
     (16.0, {"type": "CASUALTY", "subject_id": "sol-16", "severity": "CRITICAL"}),
+    (19.0, {"type": "DRONE_LOST", "drone_id": "drn-01"}),  # DEMO: HAWK 1 shot down on its way to BADGER 2-4
     (22.0, {"type": "CASUALTY", "subject_id": "sol-05", "severity": "CRITICAL"}),
     (23.0, {"type": "CASUALTY", "subject_id": "sol-12", "severity": "WOUNDED"}),
 ]
 
+
+LOSS_THREAT_RADIUS_M = 600  # TUNE: size of the zone drawn where a drone was shot down
 
 # DEMO: the threat reported mid-scenario (fictional), between Launch Site West and BADGER 1.
 DEMO_THREAT = {"name": "New air-defence threat", "lat": 47.6498, "lon": 35.5888, "radius_m": 900}
@@ -129,6 +132,40 @@ async def add_threat(body: dict) -> dict:
     return {"zone": zone.to_dict(), "rerouted": [m["data"]["drone_id"] for m in reroutes], "ms": round(ms, 1)}
 
 
+async def lose_drone(drone_id: str) -> dict:
+    """A drone is shot down: write it off, mark the spot as a threat, re-send the casualty's supplies."""
+    drone = world.repo.get_drone(drone_id)
+    if drone is None:
+        raise HTTPException(404, f"unknown drone {drone_id!r}")
+    if drone.status == "LOST":
+        return {"ok": False, "msg": "already lost"}
+    where = world.tracker.lose(drone_id) or {"lat": drone.lat, "lon": drone.lon, "phase": drone.status,
+                                             "request_id": None, "recipient_id": None}
+    world.repo.update_drone(drone_id, lat=where["lat"], lon=where["lon"])
+    lost_items = {k: v for k, v in drone.payload.items() if v}
+    await broadcast(drone_lost_msg(drone_id, where["lat"], where["lon"], where["phase"], where["request_id"],
+                                   where["recipient_id"], lost_items))
+    # TUNE: the loss spot becomes a threat zone so nothing else flies into the same fire.
+    await add_threat({"name": f"Suspected shoot-down ({drone.callsign})", "lat": where["lat"],
+                      "lon": where["lon"], "radius_m": LOSS_THREAT_RADIUS_M})
+    retry_request = where["request_id"] if where["phase"] == "EN_ROUTE" else None  # returning drones were empty-handed
+    t = time.perf_counter()
+    result = world.engine.drone_lost(drone_id, retry_request)
+    if result is not None:
+        await broadcast(dispatch_msg(result) if isinstance(result, Dispatch) else no_dispatch_msg(result))
+        world.engine.record(result)
+        if isinstance(result, Dispatch):
+            world.tracker.start(result)
+    await broadcast(queue_msg(world.engine.pending()))
+    return {"ok": True, "retry": result.to_dict() if result else None, "ms": round((time.perf_counter() - t) * 1000, 1)}
+
+
+@app.post("/losses")
+async def post_loss(body: dict):
+    """HOOK: report a drone lost (dashboard button, scenario, or real telemetry). Body: {"drone_id"}."""
+    return await lose_drone(body["drone_id"])
+
+
 @app.post("/threats")
 async def post_threat(body: dict):
     """HOOK: report a new threat zone (dashboard button, scenario, or real intel feed)."""
@@ -136,6 +173,8 @@ async def post_threat(body: dict):
 
 
 async def process(raw: dict, received_perf: float) -> dict:
+    if raw.get("type") == "DRONE_LOST":  # DEMO: scripted losses share the event timeline
+        return await lose_drone(raw["drone_id"])
     if raw.get("type") == "THREAT":  # DEMO: scripted threats share the event timeline
         return await add_threat({k: v for k, v in raw.items() if k != "type"} or dict(DEMO_THREAT))
     event = _complete(raw)

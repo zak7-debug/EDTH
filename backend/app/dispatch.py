@@ -27,7 +27,7 @@ import itertools
 import math
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable, Optional, Union
 
 from .models import Depot, Dispatch, Drone, Event, NoDispatch
@@ -107,6 +107,8 @@ class DispatchEngine:
         self._seq = itertools.count()
         self._qlock = threading.Lock()  # guards _queue; drone claims are guarded inside the repo
         self._depots: list[Depot] = repo.list_depots()  # launch sites don't move: cache once
+        self._events: dict[str, Event] = {}  # request_id -> event, for retries after a drone is lost
+        self._retries = itertools.count(1)
 
     # ---------------------------------------------------------------------------------------
     # Public API: what the backend calls
@@ -119,6 +121,7 @@ class DispatchEngine:
         moment the request arrived, so latency_ms covers parsing + matching + claiming.
         """
         t0 = received_perf if received_perf is not None else time.perf_counter()
+        self._events[event.event_id] = event  # kept so a lost drone's request can be retried
         items = needed_items(event, self.repo)
         result = self._try_dispatch(event, items, t0)
         if isinstance(result, NoDispatch) and result.reason_code == "ALL_BUSY":
@@ -159,6 +162,19 @@ class DispatchEngine:
             for q in still_waiting:
                 heapq.heappush(self._queue, q)
         return served
+
+    def drone_lost(self, drone_id: str, request_id: Optional[str] = None) -> Optional[Union[Dispatch, NoDispatch]]:
+        """A drone was shot down. Writes it off in the graph and, if it was carrying someone's
+        supplies, retries that request straight away as a new request with the original timestamp,
+        so it keeps its place at the front of the triage queue if no drone is free.
+        HOOK: called by POST /losses. Returns the retry's result (None if the drone was empty)."""
+        t0 = time.perf_counter()
+        self.repo.lose_drone(drone_id, request_id, self.clock())
+        original = self._events.get(request_id) if request_id else None
+        if original is None:
+            return None
+        retry = replace(original, event_id=f"{original.event_id}-r{next(self._retries)}")
+        return self.handle(retry, t0)
 
     def zones_changed(self) -> None:
         """A threat zone was added or moved: rebuild the router from the graph so every later
@@ -220,7 +236,7 @@ class DispatchEngine:
         """
         target = (event.lat, event.lon)
         all_drones = self.repo.list_drones()  # off the happy path, so an extra query is fine
-        carriers = [d for d in all_drones if d.carries(items)]
+        carriers = [d for d in all_drones if d.carries(items) and d.status != "LOST"]
         idle_ids = {c.id for c in idle_carriers}
         busy = [d for d in carriers if d.id not in idle_ids]  # EN_ROUTE, RETURNING or CHARGING
         missing = ", ".join(f"{q} {i}" for i, q in items.items())
