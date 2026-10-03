@@ -159,7 +159,7 @@ The real-time dispatch path is unchanged: drones still launch from depots, and t
 ## 10. Live API and flights (`backend/app/dev_server.py`, `backend/app/flights.py`)
 
 **What it does:** a complete API that follows `contracts/messages.md`, written so the dashboard runs end to end before Sasank's `main.py` lands.
-- `POST /events` takes an event, broadcasts it, times the decision, broadcasts `dispatch` or `no_dispatch`, then writes to the graph. Partial events are fine: the trigger panel only sends type, subject, severity and items, and the server fills id, time and position.
+- `POST /events` takes an event, broadcasts it, times the decision, broadcasts `dispatch` or `no_dispatch`, then writes to the graph. Partial events are fine: the Controls tab only sends type, subject, severity and items, and the server fills id, time and position.
 - `/ws` sends a snapshot and the queue on connect, then every live message.
 - `POST /scenario/demo` plays `DEMO_SCRIPT`; `POST /reset` reseeds between rehearsals.
 - `FlightTracker` (flights.py) flies each drone along its route every `TICK_S` (0.5 s): `drone_update` while flying, `delivered` on arrival (moves the items into a medic's stock in the graph), then back to its home launch site, battery swap and reload, then `drone_freed()` serves the queue.
@@ -177,7 +177,7 @@ The real-time dispatch path is unchanged: drones still launch from depots, and t
 
 ## 11. Dashboard (`frontend/index.html`)
 
-**What it does:** the one screen the judges watch. A dark Leaflet map with threat zones, launch sites, soldiers coloured by status (green OK, amber WOUNDED, red CRITICAL), medics as blue crosses (amber ring when stock is low; click for stock), and drones with callsigns and live ETA badges. The header shows connection state, the last and rolling-average decision time in ms, and free drones. The side panel has the trigger controls, the waiting queue and the event log. A red banner explains any `no_dispatch` with the suggested alternative. The layer control (top left) can show the rear supply chain from Poland to the front.
+**What it does:** the one screen the judges watch. A dark Leaflet map with threat zones, launch sites, soldiers coloured by status (green OK, amber WOUNDED, red CRITICAL), medics as blue crosses (amber ring when stock is low; click for stock), and drones with live ETA badges (only drones in the air are labelled; hover a parked one for its name). The header shows connection state, the event-to-dispatch time in ms (last, with the rolling average beside it), and free drones. The side panel shows, from the top: the waiting queue (only when someone is waiting), every delivery and evacuation under way with a big countdown, then tabs for the event log, supply (launch-site stock, resupply routes, site strikes), graph queries and manual controls. A dot on a tab means news there; a strike on a site opens the Supply tab. Run demo scenario and Reset clear the log and latency first. A red banner explains any `no_dispatch` with the suggested alternative. The layer control (top left) can show the rear supply chain from Poland to the front.
 
 **How it connects:** same host as the API, or `localhost:8000` when opened from disk. With no backend it draws `mock/snapshot.js` and says "offline: mock data". Leaflet is vendored in `frontend/vendor/leaflet` so only the map tiles need internet.
 
@@ -223,7 +223,7 @@ Each query shows its milliseconds and row count; click one to see the full text.
 4. If it was carrying someone's supplies, the request is retried at once as `<id>-r1` with the original timestamp. It gets the next-best drone, or if none is free it goes to the front of its triage level in the queue.
 5. The dashboard greys the drone out and shows "HAWK 1 shot down on its way to BADGER 2-4. Re-sending the supplies."
 
-**How to trigger it:** use the **Shot down** row in the trigger panel, call `POST /losses {"drone_id"}`, or watch the demo scenario, where HAWK 1 is lost at 19 s and BADGER 2-4 is served first when FALCON 1 comes home.
+**How to trigger it:** use the **Shot down** row in the Controls tab, call `POST /losses {"drone_id"}`, or watch the demo scenario, where HAWK 1 is lost at 19 s and BADGER 2-4 is served first when FALCON 1 comes home.
 
 **To change:** `LOSS_THREAT_RADIUS_M` in dev_server.py sets the size of the zone. A `LOST` drone never counts as busy, so a request that only a lost drone could have served gets `NO_STOCK` instead of waiting forever.
 

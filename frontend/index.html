@@ -35,7 +35,7 @@
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
-    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }  /* TUNE: base font for the projector */
+    font: 17px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }  /* TUNE: base font for the projector */
   body { display: grid; grid-template-rows: auto 1fr; }
   header { display: flex; align-items: center; gap: 20px; padding: 10px 18px; border-bottom: 1px solid var(--line);
     background: var(--panel); flex-wrap: wrap; }
@@ -43,31 +43,53 @@
   .pill { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 14px; color: var(--muted); }
   .pill.live { color: var(--ok); border-color: var(--ok); }
   .pill.mock { color: var(--wounded); border-color: var(--wounded); }
-  .lat { display: flex; gap: 18px; margin-left: auto; align-items: baseline; }
-  .lat .v { font: 700 30px/1 ui-monospace, Menlo, monospace; color: var(--accent); }
-  .lat .k { font-size: 13px; color: var(--muted); display: block; }
+  /* Headline numbers: decision latency and free drones, readable from the back of the room. */
+  .kpis { display: flex; gap: 28px; margin-left: auto; align-items: flex-end; }
+  .kpi .k { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); display: block; }
+  .kpi .v { font: 700 40px/1 ui-monospace, Menlo, monospace; color: var(--accent); }
+  .kpi .u { font-size: 16px; color: var(--muted); margin-left: 2px; }
+  .kpi .sub { font-size: 14px; color: var(--muted); margin-left: 10px; } .kpi .sub b { color: var(--text); font-family: ui-monospace, monospace; }
+  .kpi .v.none { color: var(--critical); }
   button { background: #21262d; color: var(--text); border: 1px solid var(--line); border-radius: 8px;
-    padding: 8px 14px; font: inherit; cursor: pointer; }
+    padding: 10px 16px; min-height: 44px; font: inherit; cursor: pointer; }  /* TUNE: 44px = easy to hit */
   button:hover { border-color: var(--accent); }
   button.primary { background: #1f6feb; border-color: #1f6feb; font-weight: 600; }
   button.crit { border-color: var(--critical); color: var(--critical); }
   button.wnd { border-color: var(--wounded); color: var(--wounded); }
-  main { display: grid; grid-template-columns: 1fr 420px; min-height: 0; }
+  main { display: grid; grid-template-columns: 1fr 480px; min-height: 0; }
   #mapwrap { position: relative; min-height: 0; }
   #map { position: absolute; inset: 0; background: #0b0f14; }
-  aside { border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: var(--panel); overflow-y: auto; }
+  aside { border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
   section { padding: 12px 14px; border-bottom: 1px solid var(--line); }
   section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 0 0 8px; }
   .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
   select, input { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px;
-    padding: 7px 8px; font: inherit; min-width: 0; }
+    padding: 9px 10px; min-height: 44px; font: inherit; min-width: 0; }
   select { flex: 1; }
   input[type=number] { width: 64px; }
-  #log { flex: 1; overflow-y: auto; padding: 0 14px 12px; min-height: 220px; }
-  #log .e { padding: 6px 0; border-bottom: 1px solid #21262d; font-size: 15px; display: grid;
-    grid-template-columns: 70px 1fr auto; gap: 8px; }
-  #log .t { color: var(--muted); font: 13px ui-monospace, monospace; padding-top: 2px; }
-  #log .ms { font: 600 14px ui-monospace, monospace; color: var(--accent); }
+  /* Active missions: what is flying or driving to whom, with a big countdown. */
+  #missions { max-height: 42vh; overflow-y: auto; flex: none; }
+  #missions .m { display: grid; grid-template-columns: 116px 1fr; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid #21262d; }
+  #missions .m:first-of-type { border-top: 0; }
+  #missions .big { font: 700 34px/1 ui-monospace, Menlo, monospace; color: var(--route); }
+  #missions .m.evac { padding: 4px 0; } #missions .m.evac .big { color: #f778ba; font-size: 24px; } #missions .m.evac .who { font-size: 16px; }
+  #missions .who { font-size: 18px; font-weight: 700; } #missions .who .to { color: var(--muted); font-weight: 400; }
+  #missions .what { font-size: 14px; color: var(--muted); }
+  #queue { background: #2a1416; } #queue:empty { display: none; }
+  #queue h2 { color: #ffb4ab; }
+  /* Secondary panels sit behind tabs so the live picture stays on screen. */
+  .tabs { display: flex; border-bottom: 1px solid var(--line); flex: none; }
+  .tabs button { flex: 1; border: 0; border-radius: 0; background: none; color: var(--muted); font-weight: 600;
+    border-bottom: 3px solid transparent; min-height: 50px; padding: 8px 4px; position: relative; }
+  .tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+  .tabs button.new::after { content: ''; position: absolute; top: 12px; right: 12px; width: 9px; height: 9px; border-radius: 50%; background: var(--wounded); }
+  .tab { display: none; flex: 1; overflow-y: auto; min-height: 0; } .tab.on { display: block; }
+  .ctl label { display: block; font-size: 14px; color: var(--muted); margin: 4px 0 4px; }
+  #log { padding: 0 14px 12px; }
+  #log .e { padding: 8px 0; border-bottom: 1px solid #21262d; font-size: 16px; display: grid;
+    grid-template-columns: 74px 1fr auto; gap: 8px; }
+  #log .t { color: var(--muted); font: 14px ui-monospace, monospace; padding-top: 2px; }
+  #log .ms { font: 600 15px ui-monospace, monospace; color: var(--accent); }
   #log .dispatch { color: var(--route); } #log .nod { color: var(--critical); } #log .deliv { color: var(--ok); }
   /* Graph queries panel (query_log messages) */
   #queries .qh { font-size: 14px; color: var(--muted); margin-bottom: 4px; }
@@ -95,26 +117,26 @@
   #toast { position: absolute; bottom: 18px; left: 18px; z-index: 1000; background: #1f2937; border: 1px solid var(--line);
     padding: 8px 12px; border-radius: 8px; display: none; }
   .legend { position: absolute; bottom: 18px; right: 18px; z-index: 900; background: #161b22e6; border: 1px solid var(--line);
-    border-radius: 8px; padding: 8px 12px; font-size: 14px; }
+    border-radius: 8px; padding: 8px 12px; font-size: 15px; }
   .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin: 0 6px 0 10px; vertical-align: -1px; }
   .legend i:first-child { margin-left: 0; }
   /* Map markers */
-  .drone { display: flex; align-items: center; gap: 4px; white-space: nowrap; font: 700 13px system-ui; color: #fff;
+  .drone { display: flex; align-items: center; gap: 5px; white-space: nowrap; font: 700 15px system-ui; color: #fff;
     text-shadow: 0 0 3px #000, 0 0 3px #000; }
-  .drone .dot { width: 16px; height: 16px; transform: rotate(45deg); border: 2px solid #fff; flex: none; }
-  .drone .eta { background: var(--route); color: #000; text-shadow: none; padding: 1px 6px; border-radius: 6px; font: 700 14px ui-monospace, monospace; }
+  .drone .dot { width: 18px; height: 18px; transform: rotate(45deg); border: 2px solid #fff; flex: none; }
+  .drone .eta { background: var(--route); color: #000; text-shadow: none; padding: 1px 7px; border-radius: 6px; font: 700 17px ui-monospace, monospace; }
   .depot { width: 18px; height: 18px; background: var(--depot); border: 2px solid #fff; border-radius: 3px; }
   .medic { width: 20px; height: 20px; border-radius: 50%; background: var(--medic); border: 2px solid #fff; color: #fff;
     font: 900 15px/16px system-ui; text-align: center; }
   .medic.low { box-shadow: 0 0 0 4px var(--wounded); }
   .flash { animation: flash 1s ease-out 3; } @keyframes flash { 0% { box-shadow: 0 0 0 0 var(--ok); } 100% { box-shadow: 0 0 0 26px transparent; } }
-  .lbl { background: transparent; border: 0; box-shadow: none; color: #fff; font: 600 13px system-ui; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  .lbl { background: transparent; border: 0; box-shadow: none; color: #fff; font: 600 14px system-ui; text-shadow: 0 0 3px #000, 0 0 3px #000, 0 0 3px #000; }
   .lbl::before { display: none; }
   .new-zone { animation: zonepulse 1.2s ease-in-out 5; } @keyframes zonepulse { 50% { fill-opacity: .55; } }
   #mapwrap.placing #map { cursor: crosshair; }
   #log .reroute { color: var(--wounded); }
   .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--panel); color: var(--text); }
-  .leaflet-popup-content { font-size: 15px; }
+  .leaflet-popup-content { font-size: 16px; }
   .leaflet-popup-content table { border-collapse: collapse; } .leaflet-popup-content td { padding: 1px 8px 1px 0; }
   .low-item { color: var(--wounded); font-weight: 700; }
   /* Launch-site stock panel (stock_update messages) */
@@ -128,10 +150,11 @@
   #stock .ord.lost { color: var(--critical); text-decoration: line-through; }
   #stock .beds { font-size: 13px; color: var(--muted); margin-top: 8px; }
   #stock .beds b { color: var(--text); }
-  #log .evac { color: #f778ba; } #log .stock { color: var(--depot); }
-  .amb { display: flex; align-items: center; gap: 4px; white-space: nowrap; font: 700 13px system-ui; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  #log .evac { color: #f778ba; } #log .stock { color: var(--depot); } #log .voice { color: var(--text); }
+  #log .voice q { color: var(--muted); font-style: italic; }
+  .amb { display: flex; align-items: center; gap: 4px; white-space: nowrap; font: 700 15px system-ui; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; }
   .amb .box { width: 18px; height: 14px; background: #f778ba; border: 2px solid #fff; border-radius: 3px; color: #fff; font: 900 11px/10px system-ui; text-align: center; flex: none; }
-  .amb .eta { background: #f778ba; color: #000; text-shadow: none; padding: 1px 6px; border-radius: 6px; font: 700 14px ui-monospace, monospace; }
+  .amb .eta { background: #f778ba; color: #000; text-shadow: none; padding: 1px 7px; border-radius: 6px; font: 700 17px ui-monospace, monospace; }
   .hosp { width: 20px; height: 20px; background: #f778ba; border: 2px solid #fff; border-radius: 4px; color: #fff; font: 900 15px/16px system-ui; text-align: center; }
   .hosp.down { background: #555; }
   .hosp.temp { background: #f0b429; color: #000; }
@@ -155,10 +178,9 @@
   <button class="primary" id="demoBtn">Run demo scenario</button>
   <button id="threatBtn" class="crit" title="Then click the map where the threat is">Report threat</button>
   <button id="resetBtn" title="Reseed the world between rehearsals">Reset</button>
-  <div class="lat">
-    <div><span class="k">last decision</span><span class="v" id="latLast">--</span> <span class="k" style="display:inline">ms</span></div>
-    <div><span class="k">rolling avg</span><span class="v" id="latAvg">--</span> <span class="k" style="display:inline">ms</span></div>
-    <div><span class="k">drones free</span><span class="v" id="free">--</span></div>
+  <div class="kpis">
+    <div class="kpi" title="From the event arriving to the drone being chosen"><span class="k">Event → dispatch</span><span class="v" id="latLast">--</span><span class="u">ms</span><span class="sub">avg <b id="latAvg">--</b></span></div>
+    <div class="kpi"><span class="k">Drones free</span><span class="v" id="free">--</span></div>
   </div>
 </header>
 <main>
@@ -172,26 +194,41 @@
     </div>
   </div>
   <aside>
-    <section>
-      <h2>Trigger</h2>
-      <div class="row"><select id="soldierSel"></select>
-        <button class="crit" data-sev="CRITICAL">Critical</button><button class="wnd" data-sev="WOUNDED">Wounded</button></div>
-      <div class="row"><select id="medicSel"></select><select id="itemSel"></select>
-        <input id="qty" type="number" min="1" value="2"><button id="lowBtn">Low stock</button></div>
-      <div class="row"><select id="droneSel"></select><button class="crit" id="lostBtn">Shot down</button></div>
-    </section>
-    <section id="queue"><h2>Waiting for a drone</h2><div class="empty">Nobody waiting</div></section>
-    <section id="stock"><h2>Launch-site stock</h2><div class="empty">Waiting for stock levels</div></section>
-    <section>
-      <h2>Resupply routes to launch sites</h2>
-      <div id="chain"><div class="empty">Waiting for the supply chain</div></div>
-      <div id="suggest"></div>
-      <div class="row" style="margin-top:8px"><select id="siteSel"></select><button class="crit" id="siteBtn">Destroy</button></div>
-      <div class="row"><button id="chainBtn">Show supply chain on map</button></div>
-    </section>
-    <section id="queries"><h2>Graph queries (last request)</h2><div class="empty">None yet</div></section>
-    <section style="border-bottom:0;padding-bottom:4px"><h2>Event log</h2></section>
-    <div id="log"></div>
+    <section id="queue"></section>
+    <section id="missions"><h2>In the air and on the road</h2><div class="empty">Nothing under way</div></section>
+    <nav class="tabs">
+      <button data-tab="log" class="on">Log</button><button data-tab="supply">Supply</button>
+      <button data-tab="graph">Graph</button><button data-tab="controls">Controls</button>
+    </nav>
+    <div class="tab on" id="tab-log"><div id="log"></div></div>
+    <div class="tab" id="tab-supply">
+      <section id="stock"><h2>Launch-site stock</h2><div class="empty">Waiting for stock levels</div></section>
+      <section style="border-bottom:0">
+        <h2>Resupply routes to launch sites</h2>
+        <div id="chain"><div class="empty">Waiting for the supply chain</div></div>
+        <div id="suggest"></div>
+        <div class="row" style="margin-top:10px"><select id="siteSel"></select><button class="crit" id="siteBtn">Destroy</button></div>
+        <div class="row"><button id="chainBtn">Show supply chain on map</button></div>
+      </section>
+    </div>
+    <div class="tab" id="tab-graph"><section id="queries" style="border-bottom:0"><h2>Graph queries (last request)</h2><div class="empty">None yet</div></section></div>
+    <div class="tab ctl" id="tab-controls">
+      <section>
+        <h2>Casualty</h2>
+        <div class="row"><select id="soldierSel"></select></div>
+        <div class="row"><button class="crit" data-sev="CRITICAL" style="flex:1">Critical</button><button class="wnd" data-sev="WOUNDED" style="flex:1">Wounded</button></div>
+      </section>
+      <section>
+        <h2>Medic low on stock</h2>
+        <div class="row"><select id="medicSel"></select></div>
+        <div class="row"><select id="itemSel"></select><input id="qty" type="number" min="1" value="2" aria-label="quantity"></div>
+        <div class="row"><button id="lowBtn" style="flex:1">Report low stock</button></div>
+      </section>
+      <section style="border-bottom:0">
+        <h2>Drone shot down</h2>
+        <div class="row"><select id="droneSel"></select><button class="crit" id="lostBtn">Shot down</button></div>
+      </section>
+    </div>
   </aside>
 </main>
 <script>
@@ -215,6 +252,7 @@ const markers = { personnel: {}, drones: {}, depots: {} };
 const routes = {};          // request_id -> polyline
 const eta = {};             // drone_id -> {eta, at, rate}  (seconds, performance.now(), mission-s per real-s)
 const latencies = [];
+const mission = {};         // drone_id -> {to, items} while it flies a delivery
 let chainRoutes = null, siteStatus = {};
 let stockState = null;      // last stock_update: launch-site stock, facility beds, shipments on the way
 const evacs = {};           // evac_id -> {marker, line, person_id, eta, at}
@@ -284,7 +322,12 @@ suggestLayer.addTo(map);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const clock = d => d.toLocaleTimeString([], { hour12: false });
 const fmtEta = s => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
-const fmtItems = it => Object.entries(it || {}).map(([k, v]) => `${v}× ${k.replace(/_/g, ' ')}`).join(', ');
+// TUNE: how supply items read on screen (server text uses the raw keys, pretty() swaps them).
+const ITEM_NAME = { tourniquet: 'tourniquet', blood_oneg: 'blood O-neg', chest_seal: 'chest seal',
+  hemostatic_gauze: 'haemostatic gauze', morphine_autoinjector: 'morphine' };
+const itemName = k => ITEM_NAME[k] || k.replace(/_/g, ' ');
+const pretty = s => String(s).replace(/\b[a-z]+_[a-z_]+\b/g, k => ITEM_NAME[k] || k);
+const fmtItems = it => Object.entries(it || {}).map(([k, v]) => `${v}× ${itemName(k)}`).join(', ');
 const name = id => (S.personnel[id] && S.personnel[id].callsign) || (S.drones[id] && S.drones[id].callsign)
   || (S.facilities[id] && S.facilities[id].name) || (S.depots[id] && S.depots[id].name) || id;
 const unitName = p => (S.units[p.unit_id] && S.units[p.unit_id].callsign) || p.unit_id;
@@ -294,7 +337,7 @@ function personPopup(p) {
   if (p.kind === 'MEDIC') {
     h += '<table>' + Object.entries(p.stock).map(([k, v]) => {
       const low = v < (p.stock_threshold[k] || 0);
-      return `<tr class="${low ? 'low-item' : ''}"><td>${esc(k.replace(/_/g, ' '))}</td><td>${v}${low ? ' (low)' : ''}</td></tr>`;
+      return `<tr class="${low ? 'low-item' : ''}"><td>${esc(itemName(k))}</td><td>${v}${low ? ' (low)' : ''}</td></tr>`;
     }).join('') + '</table>';
   }
   return h;
@@ -308,18 +351,20 @@ function drawPerson(p) {
     if (!m) { m = markers.personnel[p.id] = L.marker([p.lat, p.lon], { icon, zIndexOffset: 500 }).addTo(layers.personnel); }
     else { m.setIcon(icon); m.setLatLng([p.lat, p.lon]); }
   } else {
-    const style = { radius: p.status === 'OK' ? 6 : 9, color: '#fff', weight: 1.5, fillColor: STATUS_COLOUR[p.status], fillOpacity: 1 };
+    const style = { radius: p.status === 'OK' ? 7 : 11, color: '#fff', weight: 2, fillColor: STATUS_COLOUR[p.status], fillOpacity: 1 };
     if (!m) { m = markers.personnel[p.id] = L.circleMarker([p.lat, p.lon], style).addTo(layers.personnel); }
     else { m.setStyle(style); m.setRadius(style.radius); m.setLatLng([p.lat, p.lon]); }
   }
   m.bindPopup(personPopup(p));
 }
 
+// Parked or lost drones show just the diamond, so they don't bury the launch-site label; hover names them.
 function droneIcon(d) {
   const e = eta[d.id];
   const badge = e && d.status === 'EN_ROUTE' ? `<span class="eta" data-eta="${d.id}">${fmtEta(e.eta)}</span>` : '';
-  return L.divIcon({ className: '', iconSize: null, iconAnchor: [10, 10],
-    html: `<div class="drone"><span class="dot" style="background:${DRONE_COLOUR[d.status] || '#888'}"></span>${esc(d.callsign)}${badge}</div>` });
+  const label = d.status === 'EN_ROUTE' || d.status === 'RETURNING' ? esc(d.callsign) : '';
+  return L.divIcon({ className: '', iconSize: null, iconAnchor: [11, 11],
+    html: `<div class="drone" title="${esc(d.callsign)} · ${d.status}"><span class="dot" style="background:${DRONE_COLOUR[d.status] || '#888'}"></span>${label}${badge}</div>` });
 }
 function drawDrone(d) {
   let m = markers.drones[d.id];
@@ -330,7 +375,9 @@ function drawDrone(d) {
 }
 function updateFree() {
   const all = Object.values(S.drones);
-  document.getElementById('free').textContent = `${all.filter(d => d.status === 'IDLE').length}/${all.length}`;
+  const free = all.filter(d => d.status === 'IDLE').length, el = document.getElementById('free');
+  el.textContent = `${free}/${all.length}`;
+  el.classList.toggle('none', free === 0);
 }
 
 function drawRoute(requestId, pts) {
@@ -375,8 +422,13 @@ function loadSnapshot(data) {
   for (const e of data.evacuations || []) drawEvac(e);
   Object.values(S.personnel).forEach(drawPerson);
   Object.values(S.drones).forEach(drawDrone);
-  for (const d of data.dispatches || []) { drawRoute(d.request_id, d.route); eta[d.drone_id] = { eta: d.eta_s, at: performance.now(), rate: 1 }; }
+  for (const k in mission) delete mission[k];
+  for (const d of data.dispatches || []) {
+    drawRoute(d.request_id, d.route); eta[d.drone_id] = { eta: d.eta_s, at: performance.now(), rate: 1, req: d.request_id };
+    mission[d.drone_id] = { to: d.recipient_id, items: d.items };
+  }
   fillTriggers();
+  renderMissions();
 }
 
 // Hospitals and aid stations are evacuation destinations, so they sit on the sector map (the rear
@@ -403,7 +455,8 @@ function drawEvac(e) {
   const line = L.polyline(e.route, { color: '#f778ba', weight: 4, opacity: .85, dashArray: '2 8', lineCap: 'round' }).addTo(layers.evac);
   const marker = L.marker(e.route[0], { zIndexOffset: 900, icon: ambIcon(e.evac_id, p) }).addTo(layers.evac)
     .bindPopup(`<b>Evacuation</b> · ${esc(p ? p.callsign : e.person_id)} (${esc(e.severity)})<br>to ${esc(name(e.facility_id))}<br>kit: ${esc(fmtItems(e.kit))}${Object.keys(e.shortfall || {}).length ? '<br>flown ahead: ' + esc(fmtItems(e.shortfall)) : ''}`);
-  evacs[e.evac_id] = { id: e.evac_id, line, marker, person_id: e.person_id, eta: e.eta_s, at: performance.now(), rate: 1 };
+  evacs[e.evac_id] = { id: e.evac_id, line, marker, person_id: e.person_id, eta: e.eta_s, at: performance.now(), rate: 1, to: e.facility_id };
+  renderMissions();
 }
 function ambIcon(id, p) {
   return L.divIcon({ className: '', iconSize: null, iconAnchor: [11, 9],
@@ -454,7 +507,9 @@ const handlers = {
     const dr = S.drones[d.drone_id];
     drawRoute(d.request_id, d.route);
     eta[d.drone_id] = { eta: d.eta_s, at: performance.now(), rate: 1, req: d.request_id };
+    mission[d.drone_id] = { to: d.recipient_id, items: d.items };
     if (dr) { dr.status = 'EN_ROUTE'; drawDrone(dr); }
+    renderMissions();
     const bend = d.route.length > 2 ? ' · rerouted round threat zone' : '';
     log(`<b>${esc(name(d.drone_id))}</b> → ${esc(name(d.recipient_id))} · ETA ${fmtEta(d.eta_s)} · ${(d.distance_m / 1000).toFixed(1)} km${bend}`, 'dispatch', d.latency_ms);
     addLatency(d.latency_ms);
@@ -474,11 +529,14 @@ const handlers = {
         rate = 0.5 * prev.rate + 0.5 * ((prev.eta - u.eta_s) / ((now - prev.at) / 1000));
       eta[u.drone_id] = { eta: u.eta_s, at: now, rate, req: u.request_id, status: u.status };
     } else delete eta[u.drone_id];
+    const was = d.status;
     Object.assign(d, { lat: u.lat, lon: u.lon, status: u.status });
     drawDrone(d);
+    if (was !== d.status) renderMissions();
   },
   delivered(x) {
     clearRoute(x.request_id);
+    delete mission[x.drone_id]; renderMissions();
     const p = S.personnel[x.recipient_id];
     if (p && p.kind === 'MEDIC') for (const [k, v] of Object.entries(x.items)) p.stock[k] = (p.stock[k] || 0) + v;
     if (p) { drawPerson(p); flash(p); }
@@ -489,6 +547,7 @@ const handlers = {
     const el = document.getElementById('queries');
     if (x.phase === 'decide') { el.dataset.req = x.request_id; el.innerHTML = '<h2>Graph queries (last request)</h2>'; }
     else if (el.dataset.req !== x.request_id) return;
+    markTab('graph');
     const label = x.phase === 'decide' ? 'Decision' : 'Writes after broadcast';
     if (!x.queries.length) { if (x.phase === 'decide') el.innerHTML += '<div class="empty">In-memory store: no graph queries</div>'; return; }
     el.innerHTML += `<div class="qh">${label} · ${x.queries.length} quer${x.queries.length > 1 ? 'ies' : 'y'} · <b>${x.total_ms.toFixed(1)} ms</b></div>` +
@@ -510,6 +569,7 @@ const handlers = {
   drone_lost(x) {
     const d = S.drones[x.drone_id];
     if (d) { Object.assign(d, { status: 'LOST', lat: x.lat, lon: x.lon, payload: {} }); delete eta[x.drone_id]; drawDrone(d); }
+    delete mission[x.drone_id]; renderMissions();
     if (x.request_id) clearRoute(x.request_id);
     const who = x.recipient_id ? ` on its way to ${esc(name(x.recipient_id))}` : '';
     const next = x.recipient_id ? ' Re-sending the supplies.' : '';
@@ -543,6 +603,7 @@ const handlers = {
       log(`<b>${esc(f)}</b> ${hit ? 'destroyed' : 'back in service'}. ${lines.join('; ') || 'No launch site affected'}.`, hit ? 'nod' : 'deliv', c.changed.ms);
       const sg = (c.suggestions || []).find(x => x.replaces === c.changed.facility_id && x.id);
       if (sg) lines.push(`Suggested: ${esc(sg.name)}, ${esc(sg.where)}`);
+      if (hit) showTab('supply');
       if (hit) showAlert(`<b>${esc(f)} destroyed.</b> Supply chain re-planned in ${c.changed.ms.toFixed(1)} ms.<div class="alt">${lines.join('<br>') || 'No launch site affected'}</div>`);
     }
   },
@@ -595,15 +656,21 @@ const handlers = {
   },
   admitted(a) {
     const ev = evacs[a.evac_id];
-    if (ev) { layers.evac.removeLayer(ev.line); layers.evac.removeLayer(ev.marker); delete evacs[a.evac_id]; }
+    if (ev) { layers.evac.removeLayer(ev.line); layers.evac.removeLayer(ev.marker); delete evacs[a.evac_id]; renderMissions(); }
     const p = S.personnel[a.person_id], f = S.facilities[a.facility_id];
     if (p) { p.status = 'ADMITTED'; if (f) { p.lat = f.lat; p.lon = f.lon; } drawPerson(p); }
   },
+  // HOOK: voice_report. A medic's radio call, as heard and as understood.
+  voice_report(v) {
+    const lang = (v.language || '').toUpperCase();
+    const heard = v.language !== 'en' && /[\u0400-\u04FF]/.test(v.transcript) ? ` <q>${esc(v.transcript)}</q>` : '';  // show the Ukrainian as heard
+    log(`<b>RADIO ${esc(lang)}</b> ${esc(v.english || v.transcript)}${heard}`, 'voice');
+  },
   queue(q) {
     const el = document.getElementById('queue');
-    el.innerHTML = '<h2>Waiting for a drone</h2>' + (q.pending.length ? q.pending.map(r =>
+    el.innerHTML = q.pending.length ? '<h2>Waiting for a drone</h2>' + q.pending.map(r =>
       `<div class="q"><span>${r.position}. <span class="sev-${r.severity || 'LOW_STOCK'}">${r.severity || 'LOW STOCK'}</span> ${esc(name(r.subject_id))}</span><span class="t">${clock(new Date(r.ts * 1000))}</span></div>`).join('')
-      : '<div class="empty">Nobody waiting</div>');
+      : '';
   },
 };
 
@@ -662,6 +729,51 @@ function flash(p) {
   if (m && m.openPopup) m.openPopup();
 }
 
+// Active missions panel: every drone flying a delivery and every casualty on the way to hospital, soonest first.
+// The countdowns tick with the map badges (data-eta / data-evac, see the 250 ms timer).
+const etaNow = e => e.eta - e.rate * (performance.now() - e.at) / 1000;
+function renderMissions() {
+  const rows = [];
+  for (const [id, m] of Object.entries(mission)) {
+    const d = S.drones[id], e = eta[id];
+    if (!d || d.status !== 'EN_ROUTE' || !e) continue;
+    rows.push([etaNow(e), `<div class="m"><span class="big" data-eta="${id}">${fmtEta(etaNow(e))}</span><div>
+      <div class="who">${esc(name(id))} <span class="to">→</span> ${esc(name(m.to))}</div><div class="what">${esc(fmtItems(m.items))}</div></div></div>`]);
+  }
+  for (const ev of Object.values(evacs)) {
+    const p = S.personnel[ev.person_id];
+    rows.push([etaNow(ev) + 1e6, `<div class="m evac"><span class="big" data-evac="${ev.id}">${fmtEta(etaNow(ev))}</span><div>
+      <div class="who" title="casualty evacuation by road">${esc(p ? p.callsign : ev.person_id)} <span class="to">→ by road to</span> ${esc(name(ev.to).replace(/ \(.*\)/, '').replace(/ (field hospital|aid station)$/, ''))}</div></div></div>`]);
+  }
+  rows.sort((a, b) => a[0] - b[0]);
+  document.getElementById('missions').innerHTML = '<h2>In the air and on the road</h2>' +
+    (rows.length ? rows.map(r => r[1]).join('') : '<div class="empty">Nothing under way</div>');
+}
+
+// Tabs under the live panels. A dot marks a tab with news you haven't looked at.
+function showTab(t) {
+  document.querySelectorAll('.tabs button').forEach(b => {
+    const on = b.dataset.tab === t;
+    b.classList.toggle('on', on); if (on) b.classList.remove('new');
+  });
+  document.querySelectorAll('.tab').forEach(el => el.classList.toggle('on', el.id === 'tab-' + t));
+}
+function markTab(t) {
+  const b = document.querySelector(`.tabs button[data-tab="${t}"]`);
+  if (b && !b.classList.contains('on')) b.classList.add('new');
+}
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+
+// Fresh screen for a new run: log, latency and the graph-queries panel.
+function clearScreen() {
+  document.getElementById('log').innerHTML = '';
+  latencies.length = 0;
+  document.getElementById('latLast').textContent = document.getElementById('latAvg').textContent = '--';
+  const q = document.getElementById('queries'); delete q.dataset.req;
+  q.innerHTML = '<h2>Graph queries (last request)</h2><div class="empty">None yet</div>';
+  showTab('log');
+}
+
 function addLatency(ms) {
   if (ms == null) return;
   latencies.push(ms); if (latencies.length > LATENCY_WINDOW) latencies.shift();
@@ -673,21 +785,22 @@ function log(html, cls = '', ms = null) {
   const el = document.getElementById('log');
   const row = document.createElement('div');
   row.className = 'e ' + cls;
-  row.innerHTML = `<span class="t">${clock(new Date())}</span><span>${html}</span><span class="ms">${ms != null ? ms.toFixed(1) + ' ms' : ''}</span>`;
+  row.innerHTML = `<span class="t">${clock(new Date())}</span><span>${pretty(html)}</span><span class="ms">${ms != null ? ms.toFixed(1) + ' ms' : ''}</span>`;
   el.prepend(row);
+  markTab('log');
   while (el.children.length > LOG_MAX) el.lastChild.remove();
 }
 
 let bannerTimer;
 function showAlert(html) {
   const b = document.getElementById('banner');
-  b.innerHTML = html; b.style.display = 'block';
+  b.innerHTML = pretty(html); b.style.display = 'block';
   clearTimeout(bannerTimer); bannerTimer = setTimeout(() => b.style.display = 'none', BANNER_MS);
 }
 function showBanner(n) {
   const b = document.getElementById('banner');
   const alt = n.nearest_alternative && n.nearest_alternative.note ? `<div class="alt">Suggested: ${esc(n.nearest_alternative.note)}</div>` : '';
-  b.innerHTML = `<b>No drone for ${esc(name(n.recipient_id))}</b> (${esc(n.reason_code.replace('_', ' '))}): ${esc(n.reason)}${alt}`;
+  b.innerHTML = pretty(`<b>No drone for ${esc(name(n.recipient_id))}</b> (${esc(n.reason_code.replace('_', ' ').toLowerCase())}): ${esc(n.reason)}${alt}`);
   b.style.display = 'block';
   clearTimeout(bannerTimer); bannerTimer = setTimeout(() => b.style.display = 'none', BANNER_MS);
 }
@@ -753,7 +866,7 @@ function fillTriggers() {
   document.getElementById('medicSel').innerHTML = opts(people.filter(p => p.kind === 'MEDIC'));
   const items = new Set(people.flatMap(p => Object.keys(p.stock || {})));
   document.getElementById('droneSel').innerHTML = Object.values(S.drones).map(d => `<option value="${d.id}">${esc(d.callsign)}</option>`).join('');
-  document.getElementById('itemSel').innerHTML = [...items].map(i => `<option value="${i}">${i.replace(/_/g, ' ')}</option>`).join('');
+  document.getElementById('itemSel').innerHTML = [...items].map(i => `<option value="${i}">${esc(itemName(i))}</option>`).join('');
 }
 document.querySelectorAll('[data-sev]').forEach(b => b.onclick = () =>
   post('/events', { type: 'CASUALTY', subject_id: document.getElementById('soldierSel').value, severity: b.dataset.sev }));
@@ -789,8 +902,8 @@ document.getElementById('chainBtn').onclick = e => {
   }
 };
 document.getElementById('lostBtn').onclick = () => post('/losses', { drone_id: document.getElementById('droneSel').value });
-document.getElementById('demoBtn').onclick = () => post('/scenario/demo');                       // DEMO
-document.getElementById('resetBtn').onclick = () => { document.getElementById('log').innerHTML = ''; latencies.length = 0; post('/reset'); };
+document.getElementById('demoBtn').onclick = () => { clearScreen(); post('/scenario/demo'); };   // DEMO
+document.getElementById('resetBtn').onclick = () => { clearScreen(); post('/reset'); };
 
 if (window.MOCK_SNAPSHOT) loadSnapshot(window.MOCK_SNAPSHOT);  // draw something instantly, the socket replaces it
 connect();
