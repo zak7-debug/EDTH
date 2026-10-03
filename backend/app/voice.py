@@ -4,7 +4,8 @@
                               in frontend/audio/, whose .txt transcript is the fallback when speech
                               to text is unavailable.
     POST /voice/text          {"text": "...", "language": "uk"}: skip speech to text (tests, fallback)
-    Both take an optional `speaker`: the reporter's callsign, e.g. "Борсук один, медик" (voice/pipeline.py).
+    Both take an optional `speaker`: the reporter's callsign, e.g. "Борсук один, медик" (voice/pipeline.py),
+    and optional `lat` / `lon`: the device's position, which places a truck driver's road or threat report.
 
 Speech to text is faster-whisper, offline on CPU (`pip install -r requirements-voice.txt`, then
 `python scripts/fetch_whisper.py` once while online). If it isn't installed, the model is missing or
@@ -159,7 +160,7 @@ def _zone_intent(sentence: str, toks: list[str]) -> Optional[str]:
 
 
 def _zone_events(sentences: list[str], speaker: Optional[str], callsign_ids: dict[str, str],
-                 out: ParsedReport) -> None:
+                 out: ParsedReport, position: Optional[tuple[float, float]] = None) -> None:
     """Zone reports: the intent's sentence and the ones after it (until the next intent) carry the
     distance, direction and radius, e.g. "Ворожий дрон. Вісімсот метрів на північний схід. Закрити п'ятсот"."""
     marks = [(k, _zone_intent(s, _tokens(s))) for k, s in enumerate(sentences)]
@@ -169,7 +170,18 @@ def _zone_events(sentences: list[str], speaker: Optional[str], callsign_ids: dic
         spatial_text = ". ".join(sentences[k:end])
         sp = parse_spatial(spatial_text)
         pid = callsign_ids.get(speaker or "")
-        if pid is None:
+        if pid is None and position is not None:
+            # A truck driver isn't in the graph: place it from the device's position (geo/api `source`).
+            # No direction heard means "here".
+            here = sp.bearing_deg is None
+            ev = {"type": kind, "source": {"lat": position[0], "lon": position[1], "user_id": "driver"},
+                  "callsign": "DRIVER", "distance_m": 0.0 if here else sp.distance_m,
+                  "bearing_deg": 0.0 if here else sp.bearing_deg,
+                  "assumptions": sp.assumptions + (["at the reporter's position"] if here else []), "text": spatial_text}
+            if sp.radius_m is not None:
+                ev["radius_m"] = sp.radius_m
+            out.events.append(ev)
+        elif pid is None:
             out.unparsed.append(f"{ENGLISH_ZONES[kind]} reported but no callsign heard to place it from")
         elif sp.bearing_deg is None:
             out.unparsed.append(f"{ENGLISH_ZONES[kind]}: {'; '.join(sp.reasons)}, not placed (ask for a direction)")
@@ -181,7 +193,8 @@ def _zone_events(sentences: list[str], speaker: Optional[str], callsign_ids: dic
             out.events.append(ev)
 
 
-def parse_report(text: str, callsign_ids: dict[str, str]) -> ParsedReport:
+def parse_report(text: str, callsign_ids: dict[str, str],
+                 position: Optional[tuple[float, float]] = None) -> ParsedReport:
     """Turn one radio report into partial events. callsign_ids maps "BADGER 2-4" -> "sol-10".
 
     The squad named first without a soldier number ("Борсук два, медик") is the speaker; their
@@ -224,7 +237,7 @@ def parse_report(text: str, callsign_ids: dict[str, str]) -> ParsedReport:
                 out.unparsed.append(f"supplies requested but no medic callsign heard: {sentence}")
             else:
                 out.events.append({"type": "LOW_STOCK", "subject_id": pid, "items": items, "callsign": medic})
-    _zone_events(sentences, speaker, callsign_ids, out)
+    _zone_events(sentences, speaker, callsign_ids, out, position)
     if not out.events and not out.unparsed:
         out.unparsed.append("no casualty or supply request heard")
     out.english = english_summary(out.events)
@@ -240,8 +253,9 @@ def english_summary(events: list[dict]) -> str:
             parts.append(f"{e['callsign']} is {e['severity']}" + (f", needs {extra}" if extra else ""))
         elif e["type"] in ENGLISH_ZONES:
             r = f", radius {e['radius_m']:.0f} m" if e.get("radius_m") else ""
-            parts.append(f"{e['callsign']} reports {ENGLISH_ZONES[e['type']]} {e['distance_m']:.0f} m at "
-                         f"{e['bearing_deg']:.0f} degrees{r}")
+            where = ("at their position" if not e["distance_m"]
+                     else f"{e['distance_m']:.0f} m at {e['bearing_deg']:.0f} degrees")
+            parts.append(f"{e['callsign']} reports {ENGLISH_ZONES[e['type']]} {where}{r}")
         else:
             parts.append(f"{e['callsign']} is running low: needs {extra}")
     return ". ".join(parts) + ("." if parts else "")
@@ -281,13 +295,13 @@ _ids = itertools.count(1)
 
 
 async def handle_transcript(text: str, language: Optional[str], stt: str, stt_ms: float,
-                            speaker: Optional[str] = None) -> dict:
+                            speaker: Optional[str] = None, position: Optional[tuple[float, float]] = None) -> dict:
     """Parse, broadcast the voice_report, then run each event through the normal pipeline.
     speaker is the reporter's own callsign as they'd say it ("Борсук один, медик"), for a device that
     knows who is holding it; it is read as if spoken first, so "I'm out of blood" finds their medic."""
     from . import dev_server  # late import: dev_server includes this router
     callsign_ids = {p.callsign: p.id for p in dev_server.world.repo.list_personnel()}
-    parsed = parse_report(f"{speaker}. {text}" if speaker else text, callsign_ids)
+    parsed = parse_report(f"{speaker}. {text}" if speaker else text, callsign_ids, position)
     report_id = f"voice-{int(time.time())}-{next(_ids)}"
     for k, ev in enumerate(parsed.events, start=1):
         ev["event_id"] = f"{report_id}-{k}"  # becomes the dispatch's request_id
@@ -304,7 +318,7 @@ async def handle_transcript(text: str, language: Optional[str], stt: str, stt_ms
 
 @router.post("/voice")
 async def post_voice(request: Request, clip: Optional[str] = None, language: Optional[str] = None,
-                     speaker: Optional[str] = None):
+                     speaker: Optional[str] = None, lat: Optional[float] = None, lon: Optional[float] = None):
     audio = await request.body()
     start = time.perf_counter()
     try:
@@ -317,11 +331,17 @@ async def post_voice(request: Request, clip: Optional[str] = None, language: Opt
         if text is None:
             raise HTTPException(503, f"speech to text unavailable ({e}) and no transcript for clip {clip!r}")
     stt_ms = round((time.perf_counter() - start) * 1000, 1)
-    return await handle_transcript(text, lang, stt, stt_ms, speaker)
+    return await handle_transcript(text, lang, stt, stt_ms, speaker, _position(lat, lon))
 
 
 @router.post("/voice/text")
 async def post_voice_text(body: dict):
     if not body.get("text"):
         raise HTTPException(422, "body needs text")
-    return await handle_transcript(body["text"], body.get("language"), "text", 0.0, body.get("speaker"))
+    return await handle_transcript(body["text"], body.get("language"), "text", 0.0, body.get("speaker"),
+                                   _position(body.get("lat"), body.get("lon")))
+
+
+def _position(lat, lon) -> Optional[tuple[float, float]]:
+    """The reporter's device position (a truck driver), if sent."""
+    return (float(lat), float(lon)) if lat is not None and lon is not None else None

@@ -57,10 +57,16 @@ def _reporter(raw: dict, world) -> tuple[tuple[float, float], Optional[str]]:
     raise HTTPException(422, "need the reporter's position: source {lat, lon} or subject_id")
 
 
+def _ground(world):
+    """Threat zones plus the dashboard's road blocks (blocks.py), so a spoken report never reopens them."""
+    from ..blocks import ground_zones
+    return ground_zones(world.repo)
+
+
 def _sync_ground(world) -> None:
     store = world.geo.store
     roads.set_ground_constraints([z.no_fly_zone() for z in store.ground_zones()], store.blocked_edges())
-    world.evac.roads = roads.net_for(world.repo.list_no_fly_zones())
+    world.evac.roads = roads.net_for(_ground(world))
 
 
 async def _apply(world, action: str, zone: GeoZone) -> list[str]:
@@ -87,7 +93,7 @@ async def _remove(world, zone: GeoZone, reason: str) -> None:
     if world.geo.cfg["types"][zone.kind].get("air"):
         world.repo.remove_no_fly_zone(zone.id)
         world.engine.zones_changed()
-        world.evac.roads = roads.net_for(world.repo.list_no_fly_zones())
+        world.evac.roads = roads.net_for(_ground(world))
     else:
         _sync_ground(world)
     await _dev().broadcast(geo_zone_msg("zone_expired", zone.feature(), reason))
@@ -102,7 +108,7 @@ async def handle_event(raw: dict) -> dict:
     try:
         body, changes = world.geo.handle(
             raw, reporter, event_id=event_id, reporter_id=reporter_id,
-            roadnet=lambda: roads.net_for(world.repo.list_no_fly_zones()),
+            roadnet=lambda: roads.net_for(_ground(world)),
             drop_points=lambda: [(p.id, (p.lat, p.lon)) for p in world.repo.list_personnel()
                                  if p.kind == "MEDIC"] + [(d.id, (d.lat, d.lon)) for d in world.repo.list_depots()])
     except GeoError as e:
