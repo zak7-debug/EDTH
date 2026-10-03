@@ -13,7 +13,7 @@ Open http://localhost:8000 and press **Run demo scenario**. Rerun `./start.sh` b
 
 ## Voice reports
 
-Press **Radio** in the dashboard's dock. Medics, identified by their Ukrainian callsign («Борсук один, медик»), report casualties, restocks and threats. Truck drivers report blocked roads from their position on the map. Use the scripted calls, hold to talk, or type. Speech to text is offline faster-whisper (`pip install -r requirements-voice.txt`, then `python scripts/fetch_whisper.py` once while online). Without it, the scripted calls fall back to their saved transcripts. From a laptop: `python -m voice.pipeline --mic --speaker "Борсук один, медик"` (needs `pip install sounddevice`). Details: README_voice_intake.md, README_audio_geolocation.md.
+Press **Radio** in the dashboard's dock. Medics, identified by their Ukrainian callsign («Борсук один, медик»), report casualties, restocks and threats. Truck drivers report blocked roads from their position on the map. Use the scripted calls, hold to talk, or type. Pick who is speaking first; then free speech works: «Один поранений, важкий, потрібна кров» marks the next unhurt soldier of that squad (name them, «Борсук три-два», to be exact). The panel shows what was heard and why anything wasn't acted on. Speech to text is offline faster-whisper (`pip install -r requirements-voice.txt`, then `python scripts/fetch_whisper.py` once while online). Without it, the scripted calls fall back to their saved transcripts. From a laptop: `python -m voice.pipeline --mic --speaker "Борсук один, медик"` (needs `pip install sounddevice`). Details: README_voice_intake.md, README_audio_geolocation.md.
 
 ## Test
 

@@ -1417,7 +1417,7 @@ function showRadio(r, wallMs) {
     const kind = e.type === 'LOW_STOCK' ? `${(e.urgency || 'NON_URGENT').replace('_', '-').toLowerCase()} restock` : e.type.replace(/_/g, ' ').toLowerCase();
     return `<div class="ev">${esc(e.callsign || 'medic')}: ${esc(kind)} → ${what}</div>`;
   }).join('');
-  const uk = /[\u0400-\u04FF]/.test(r.transcript) ? `<div><span class="k">Heard</span><q>${esc(r.transcript)}</q></div>` : '';
+  const uk = `<div><span class="k">Heard</span><q>${esc(r.transcript || '(nothing)')}</q></div>`;  // always: shows what speech to text made of it
   out.innerHTML = `<h3>Last report</h3>${uk}<div><span class="k">Understood</span>${esc(r.english || '–')}</div>${ev}` +
     r.unparsed.map(u => `<div class="un">Not acted on: ${esc(u)}</div>`).join('') +
     (r.readback ? `<div><span class="k">Reply 🔊</span><b>${esc(r.readback.uk)}</b><br><span style="color:var(--muted)">${esc(r.readback.en)}</span></div>` : '') +
