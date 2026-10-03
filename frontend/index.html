@@ -158,6 +158,10 @@
   .hosp { width: 20px; height: 20px; background: #f778ba; border: 2px solid #fff; border-radius: 4px; color: #fff; font: 900 15px/16px system-ui; text-align: center; }
   .hosp.down { background: #555; }
   .hosp.temp { background: #f0b429; color: #000; }
+  /* Restock shipments on the way (stock_update orders), moving along their legs */
+  .ship { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .ship .ic { font-size: 20px; line-height: 1; filter: drop-shadow(0 0 2px #000); }
+  .ship .eta { background: var(--depot); color: #000; padding: 1px 6px; border-radius: 6px; font: 700 14px ui-monospace, monospace; }
   /* Suggested temporary sites (supply_chain.suggestions, resilience.py) */
   .sugg { width: 22px; height: 22px; border: 3px dashed #f0b429; border-radius: 50%; background: #f0b42933; color: #f0b429;
     font: 900 15px/16px system-ui; text-align: center; animation: zonepulse 1.2s ease-in-out infinite; }
@@ -311,13 +315,67 @@ function showOfflineBackdrop() {
 const layers = {
   zones: L.layerGroup().addTo(map), depots: L.layerGroup().addTo(map), routes: L.layerGroup().addTo(map),
   personnel: L.layerGroup().addTo(map), drones: L.layerGroup().addTo(map), chain: L.layerGroup(),
-  hospitals: L.layerGroup().addTo(map), evac: L.layerGroup().addTo(map),
+  hospitals: L.layerGroup().addTo(map), evac: L.layerGroup().addTo(map), shipments: L.layerGroup().addTo(map),
 };
 L.control.layers({ 'Satellite': satellite, 'Dark map': dark }, { 'Roads and tracks': roads, 'Place names': placeNames, 'Threat zones': layers.zones, 'Launch sites': layers.depots, 'Routes': layers.routes,
   'Personnel': layers.personnel, 'Drones': layers.drones, 'Hospitals and aid stations': layers.hospitals,
-  'Evacuations': layers.evac, 'Supply chain (rear)': layers.chain },
+  'Evacuations': layers.evac, 'Shipments on the way': layers.shipments, 'Supply chain (rear)': layers.chain },
   { collapsed: true, position: 'topleft' }).addTo(map);
 suggestLayer.addTo(map);
+
+// ---------------------------------------------------------------------------------------------
+// Ground routes: road and rail legs of the supply chain follow the main corridors between region
+// cities, through a few hand-placed waypoints (city centres). DEMO / keep it stylised: corridors are
+// at national scale only and pass through towns, not traced roads. Legs inside the sector (to the
+// fictional launch sites and field hospitals) stay straight on purpose, so the map never shows
+// anything that reads like a real front-line resupply route. Unknown legs are drawn straight.
+// ---------------------------------------------------------------------------------------------
+const TOWN = {  // TUNE: corridor waypoints (city centres)
+  przemysl: [49.784, 22.768], ternopil: [49.553, 25.594], khmelnytskyi: [49.422, 26.987], zhytomyr: [50.254, 28.658],
+  bilaTserkva: [49.795, 30.131], uman: [48.749, 30.221], khrystynivka: [48.834, 29.969], kropyvnytskyi: [48.508, 32.262],
+  pyatykhatky: [48.413, 33.693], kremenchuk: [49.066, 33.410], lubny: [50.017, 32.997], hrebinka: [50.110, 32.449],
+  krasnohrad: [49.375, 35.441], smila: [49.222, 31.887], novomoskovsk: [48.633, 35.224], vilniansk: [47.945, 35.430],
+};
+const CORRIDOR = {  // "src>dst|MODE": waypoints from src to dst (reversed automatically the other way round)
+  'sup-01>dc-03|TRUCK': ['przemysl'],
+  'dc-03>dc-01|TRUCK': ['ternopil', 'khmelnytskyi', 'uman', 'kropyvnytskyi', 'pyatykhatky'],
+  'sup-01>dc-04|TRUCK': ['przemysl', 'ternopil', 'khmelnytskyi'],
+  'sup-02>hos-02|TRUCK': ['bilaTserkva', 'uman', 'kropyvnytskyi', 'pyatykhatky'],
+  'sup-02>dc-05|TRUCK': ['lubny'],
+  'sup-03>dc-04|TRUCK': ['zhytomyr'],
+  'dc-03>dc-04|RAIL': ['ternopil', 'khmelnytskyi'],
+  'sup-03>dc-05|RAIL': ['hrebinka', 'lubny'],
+  'dc-04>dc-05|RAIL': ['khrystynivka', 'smila', 'kremenchuk'],
+  'dc-04>dc-01|RAIL': ['khrystynivka', 'kropyvnytskyi', 'pyatykhatky'],
+  'dc-05>dc-01|RAIL': ['krasnohrad', 'novomoskovsk'],
+  'dc-05>dc-02|RAIL': ['krasnohrad', 'novomoskovsk'],
+  'dc-01>dc-02|TRUCK': [],
+  'dc-01>hos-03|TRUCK': [],
+};
+// Points of one leg, from src to dst. `at` finds a site's position (facility, depot or suggestion).
+function legPoints(src, dst, mode, at) {
+  const a = at(src), b = at(dst); if (!a || !b) return null;
+  let w = CORRIDOR[`${src}>${dst}|${mode}`];
+  if (!w && CORRIDOR[`${dst}>${src}|${mode}`]) w = [...CORRIDOR[`${dst}>${src}|${mode}`]].reverse();
+  return [[a.lat, a.lon], ...(w || []).map(t => TOWN[t]), [b.lat, b.lon]];
+}
+// TUNE: how each mode looks. Road = solid, rail = dashed like a railway, air = dotted.
+const MODE_STYLE = { TRUCK: { dashArray: null }, RAIL: { dashArray: '10 5' }, HELO: { dashArray: '2 7' }, DRONE: { dashArray: '2 7' } };
+const legStyle = (mode, base) => ({ ...base, ...(MODE_STYLE[mode] || { dashArray: '2 6' }) });
+// Position a share `f` (0..1) of the way along a polyline, by distance.
+function alongLine(pts, f) {
+  const seg = []; let total = 0;
+  for (let i = 1; i < pts.length; i++) { const d = L.latLng(pts[i - 1]).distanceTo(pts[i]); seg.push(d); total += d; }
+  let want = Math.max(0, Math.min(1, f)) * total;
+  for (let i = 0; i < seg.length; i++) {
+    if (want <= seg[i] || i === seg.length - 1) {
+      const k = seg[i] ? Math.min(1, want / seg[i]) : 0;
+      return [pts[i][0] + (pts[i + 1][0] - pts[i][0]) * k, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * k];
+    }
+    want -= seg[i];
+  }
+  return pts[0];
+}
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const clock = d => d.toLocaleTimeString([], { hour12: false });
@@ -391,6 +449,7 @@ function clearRoute(requestId) {
 // HOOK: the `snapshot` message (and GET /state, and the mock) all land here.
 function loadSnapshot(data) {
   Object.values(layers).forEach(l => l.clearLayers());
+  for (const k in shipMarkers) delete shipMarkers[k];
   for (const k in markers) markers[k] = {};
   for (const k in routes) delete routes[k];
   const byId = arr => Object.fromEntries((arr || []).map(x => [x.id, x]));
@@ -413,8 +472,8 @@ function loadSnapshot(data) {
   }
   const pos = id => S.facilities[id] || S.depots[id];
   for (const l of data.supply_links || []) {
-    const a = pos(l.src_id), b = pos(l.dst_id);
-    if (a && b) L.polyline([[a.lat, a.lon], [b.lat, b.lon]], { color: '#d2a8ff', weight: 2, opacity: .6, dashArray: '2 6' })
+    const pts = legPoints(l.src_id, l.dst_id, l.mode, pos);
+    if (pts) L.polyline(pts, legStyle(l.mode, { color: '#d2a8ff', weight: 2, opacity: .6 }))
       .bindTooltip(`${l.mode} · ${l.lead_time_min} min`, { className: 'lbl' }).addTo(layers.chain);
   }
   for (const k in evacs) delete evacs[k];
@@ -465,7 +524,27 @@ function ambIcon(id, p) {
 
 // Launch-site stock table + shipments on the way + hospital beds.
 const ITEM_SHORT = { tourniquet: 'TQ', blood_oneg: 'Blood', chest_seal: 'Seal', hemostatic_gauze: 'Gauze', morphine_autoinjector: 'Morph' };  // TUNE
-const orderClock = {};  // order_id -> {left, at}: real seconds until it lands
+const orderClock = {};  // order_id -> {left, at, speed, total, legs}: real seconds until it lands
+const shipMarkers = {}; // order_id -> marker moving along its road / rail / air legs
+const MODE_ICON = { TRUCK: '🚚', RAIL: '🚆', HELO: '🚁', DRONE: '✈' };  // TUNE
+// Where a shipment is now: walk its legs by lead-time minutes elapsed.
+function placeShipment(id, o, leftReal) {
+  if (!o.legs || !o.legs.length) return;
+  let t = o.total - leftReal * o.speed / 60, leg = o.legs[o.legs.length - 1], f = 1;
+  for (const l of o.legs) { if (t <= l.minutes) { leg = l; f = l.minutes ? t / l.minutes : 1; break; } t -= l.minutes; }
+  const pts = legPoints(leg.src_id, leg.dst_id, leg.mode, x => S.facilities[x] || S.depots[x]); if (!pts) return;
+  const ll = alongLine(pts, f), mins = Math.ceil(leftReal * o.speed / 60);
+  const html = `<div class="ship"><span class="ic">${MODE_ICON[leg.mode] || '•'}</span><span class="eta">${mins} min</span></div>`;
+  let m = shipMarkers[id];
+  if (!m) {
+    m = shipMarkers[id] = L.marker(ll, { zIndexOffset: 800, icon: L.divIcon({ className: '', iconSize: null, iconAnchor: [12, 12], html }) })
+      .bindTooltip(`${fmtItems(o.items)} · ${leg.mode.toLowerCase()} to ${name(leg.dst_id)}`, { className: 'lbl', direction: 'top' }).addTo(layers.shipments);
+    m._html = html;
+  } else {
+    m.setLatLng(ll);
+    if (m._html !== html) { m.setIcon(L.divIcon({ className: '', iconSize: null, iconAnchor: [12, 12], html })); m._html = html; }
+  }
+}
 function renderStock(changedIds = []) {
   const st = stockState; if (!st) return;
   const items = Object.keys(ITEM_SHORT);
@@ -481,7 +560,8 @@ function renderStock(changedIds = []) {
   const nm = id => (S.facilities[id] || S.depots[id] || { name: id }).name;
   const live = st.orders.filter(o => o.status === 'IN_TRANSIT' || (o.status === 'LOST' && Date.now() / 1000 - o.placed_ts < 600));
   for (const o of live) {
-    if (o.status === 'IN_TRANSIT') orderClock[o.order_id] = { left: o.remaining_s_real, at: performance.now(), mins: o.remaining_min, speed: st.order_speed };
+    if (o.status === 'IN_TRANSIT') orderClock[o.order_id] = { left: o.remaining_s_real, at: performance.now(), mins: o.remaining_min, speed: st.order_speed,
+      total: o.minutes, legs: o.legs, items: o.items };
     h += o.status === 'LOST'
       ? `<div class="ord lost">${esc(fmtItems(o.items))} to ${esc(nm(o.depot_id))}: lost at ${esc(nm(o.lost_at))}</div>`
       : `<div class="ord">↳ ${esc(fmtItems(o.items))} to ${esc(nm(o.depot_id))} from ${esc(nm(o.source_id))} · <b data-order="${o.order_id}"></b></div>`;
@@ -489,6 +569,10 @@ function renderStock(changedIds = []) {
   const beds = st.facilities.filter(f => f.beds && f.status !== 'DESTROYED' && S.facilities[f.id] && S.facilities[f.id].role !== 'ROLE_3');
   if (beds.length) h += '<div class="beds">' + beds.map(f => `${esc(nm(f.id).replace(/ \(.*\)/, ''))} <b>${f.beds_used}/${f.beds}</b> beds`).join(' · ') + '</div>';
   document.getElementById('stock').innerHTML = h;
+  for (const id of Object.keys(orderClock)) if (!live.some(o => o.order_id === id && o.status === 'IN_TRANSIT')) {
+    if (shipMarkers[id]) { layers.shipments.removeLayer(shipMarkers[id]); delete shipMarkers[id]; }
+    delete orderClock[id];
+  }
   renderStock.prev = Object.fromEntries(st.depots.flatMap(d => items.map(i => [d.id + i, d.stock[i] || 0])));
 }
 
@@ -616,8 +700,8 @@ const handlers = {
       .bindTooltip(f.name, { direction: 'top', className: 'lbl' }).addTo(f.kind === 'HOSPITAL' ? layers.chain : layers.depots);
     const pos = id => S.facilities[id] || S.depots[id];
     for (const l of x.links) {
-      const a = pos(l.src_id), b = pos(l.dst_id);
-      if (a && b) L.polyline([[a.lat, a.lon], [b.lat, b.lon]], { color: '#f0b429', weight: 2, opacity: .7, dashArray: '2 6' })
+      const pts = legPoints(l.src_id, l.dst_id, l.mode, pos);
+      if (pts) L.polyline(pts, legStyle(l.mode, { color: '#f0b429', weight: 2, opacity: .7 }))
         .bindTooltip(`${l.mode} · ${Math.round(l.lead_time_min)} min`, { className: 'lbl' }).addTo(layers.chain);
     }
     const lost = (S.facilities[x.replaces] || { name: x.replaces }).name;
@@ -678,8 +762,8 @@ function drawChainRoutes() {
   chainActive.clearLayers();
   const pos = id => S.facilities[id] || S.depots[id];
   for (const r of Object.values(chainRoutes || {})) for (const l of r.legs || []) {
-    const a = pos(l.src_id), b = pos(l.dst_id);
-    if (a && b) L.polyline([[a.lat, a.lon], [b.lat, b.lon]], { color: '#3fb950', weight: 4, opacity: .9 }).addTo(chainActive);
+    const pts = legPoints(l.src_id, l.dst_id, l.mode, pos);
+    if (pts) L.polyline(pts, legStyle(l.mode, { color: '#3fb950', weight: 4, opacity: .9 })).addTo(chainActive);
   }
   for (const [id, st] of Object.entries(siteStatus)) if (st === 'DESTROYED' && S.facilities[id]) {
     const f = S.facilities[id];
@@ -706,8 +790,8 @@ function renderSuggestions(list) {
       .bindPopup(`<b>${esc(s.name)}</b><br>${esc(s.where)}<ul style="margin:4px 0 6px 18px;padding:0">${s.why.map(w => `<li>${esc(w)}</li>`).join('')}</ul>
         <button class="deploy" onclick="deploySite('${esc(s.replaces)}')">Deploy</button>`).addTo(suggestLayer);
     for (const l of s.links) {
-      const a = l.src_id === s.id ? s : pos(l.src_id), b = l.dst_id === s.id ? s : pos(l.dst_id);
-      if (a && b) L.polyline([[a.lat, a.lon], [b.lat, b.lon]], { color: '#f0b429', weight: 2, opacity: .8, dashArray: '6 6', interactive: false }).addTo(suggestLayer);
+      const pts = legPoints(l.src_id, l.dst_id, l.mode, id => id === s.id ? s : pos(id));
+      if (pts) L.polyline(pts, legStyle(l.mode, { color: '#f0b429', weight: 2, opacity: .8, interactive: false })).addTo(suggestLayer);
     }
   }
 }
@@ -827,6 +911,7 @@ setInterval(() => {
     const left = Math.max(0, o.left - (now - o.at) / 1000);
     el.textContent = `${Math.ceil(left * o.speed / 60)} min`;
   });
+  for (const [id, o] of Object.entries(orderClock)) placeShipment(id, o, Math.max(0, o.left - (now - o.at) / 1000));
 }, 250);
 
 // ---------------------------------------------------------------------------------------------
