@@ -11,6 +11,10 @@ EDTH_REPO=memory ./start.sh   # same, without a database
 
 Open http://localhost:8000 and press **Run demo scenario**. Rerun `./start.sh` before every rehearsal: TuringDB keeps every change's history, so a long session gets slower (docs/turingdb-notes.md). TuringDB's graph UI is at http://localhost:8080 while it runs. Run `python scripts/fetch_tiles.py` once while online so the map background works without internet. First run creates `.venv` and installs `requirements.txt` (Python 3.11+).
 
+## Voice reports
+
+Press **Radio** in the dashboard's dock. Medics, identified by their Ukrainian callsign («Борсук один, медик»), report casualties, restocks and threats. Truck drivers report blocked roads from their position on the map. Use the scripted calls, hold to talk, or type. Speech to text is offline faster-whisper (`pip install -r requirements-voice.txt`, then `python scripts/fetch_whisper.py` once while online). Without it, the scripted calls fall back to their saved transcripts. From a laptop: `python -m voice.pipeline --mic --speaker "Борсук один, медик"` (needs `pip install sounddevice`). Details: README_voice_intake.md, README_audio_geolocation.md.
+
 ## Test
 
 ```bash
@@ -33,6 +37,9 @@ backend/app/dev_server.py  working API: POST /events, /ws, tick loop, demo scena
 backend/app/flights.py     flies dispatched drones, delivers, returns, drains the queue
 backend/app/dispatch.py    dispatch engine
 backend/app/routing.py     shortest path round threat zones (visibility graph + A*)
+backend/app/voice.py       voice reports: speech to text, Ukrainian/English parser, POST /voice
+backend/app/geo/           spoken distance + direction -> zones and road blocks (GET /zones)
+voice/pipeline.py          send a recorded or live call to /voice from a laptop
 sim/simulator.py           event simulator
 frontend/index.html        Leaflet dashboard (mock/ = offline seed, vendor/ = Leaflet)
 contracts/                 graph schema, event and WebSocket formats

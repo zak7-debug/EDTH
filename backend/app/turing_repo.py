@@ -405,6 +405,10 @@ class TuringRepo:
             f"MERGE (z:NoFlyZone {{id: {lit(zone.id)}}}) "
             f"SET z.name = {lit(zone.name)}, z.polygon_json = {lit(json.dumps(zone.polygon))}"])
 
+    def remove_no_fly_zone(self, zone_id):
+        if any(z.id == zone_id for z in self.list_no_fly_zones()):  # a write needs a change: skip no-ops
+            self._write(self.g_logistics, [f"MATCH (z:NoFlyZone {{id: {lit(zone_id)}}}) DETACH DELETE z"])
+
     def _payload_queries(self, drone_id: str, payload: dict[str, int], existing: dict[str, int]) -> list[str]:
         qs = []
         for item, qty in payload.items():

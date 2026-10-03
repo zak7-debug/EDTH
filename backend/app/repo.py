@@ -39,6 +39,10 @@ class GraphRepo(Protocol):
     def add_no_fly_zone(self, zone: NoFlyZone) -> None:
         """A threat appeared (or a zone was redrawn): create or replace it by id."""
         ...
+
+    def remove_no_fly_zone(self, zone_id: str) -> None:
+        """A zone expired or an operator cleared it (geo/). No-op if it isn't there."""
+        ...
     def list_facilities(self) -> list[Facility]: ...
     def list_supply_links(self) -> list[SupplyLink]: ...
     def set_facility_status(self, facility_id: str, status: str) -> None:
@@ -143,6 +147,9 @@ class InMemoryRepo:
 
     def add_no_fly_zone(self, zone):
         self.no_fly_zones[zone.id] = zone
+
+    def remove_no_fly_zone(self, zone_id):
+        self.no_fly_zones.pop(zone_id, None)
 
     def list_facilities(self):
         return list(self.facilities.values())

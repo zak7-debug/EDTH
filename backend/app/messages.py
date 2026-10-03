@@ -12,7 +12,7 @@ from .repo import GraphRepo
 
 WS_TYPES = ("snapshot", "event", "dispatch", "no_dispatch", "drone_update", "delivered", "queue", "query_log", "zone_added", "reroute", "drone_lost", "supply_chain",
             "stock_update", "evacuation", "evac_update", "admitted", "voice_report", "site_deployed",
-            "site_ready")
+            "site_ready", "zone_created", "zone_updated", "zone_expired")
 
 
 def msg(type_: str, data: dict) -> dict:
@@ -73,6 +73,15 @@ def query_log_msg(request_id: str, phase: str, entries: list[dict]) -> dict:
     (the writes after the broadcast). entries come from querylog.capture()."""
     return msg("query_log", {"request_id": request_id, "phase": phase, "queries": entries,
                              "total_ms": round(sum(e["ms"] for e in entries), 2)})
+
+
+def geo_zone_msg(type_: str, feature: dict, reason: str = "") -> dict:
+    """zone_created / zone_updated / zone_expired: a zone from a spoken report (geo/), as a GeoJSON
+    Feature. zone_expired also carries `reason` (expired / operator)."""
+    data = dict(feature)
+    if reason:
+        data["reason"] = reason
+    return msg(type_, data)
 
 
 def zone_added_msg(zone) -> dict:

@@ -3,3 +3,4 @@ uvicorn[standard]>=0.29
 turingdb>=3.0
 pytest>=8
 httpx>=0.27
+pyyaml>=6  # geo/zones.yaml (falls back to built-in defaults without it)

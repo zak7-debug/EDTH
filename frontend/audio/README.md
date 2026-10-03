@@ -11,6 +11,7 @@ All lines are invented: they use the seed's fictional callsigns (BADGER 1 to 3).
 | `badger3-critical-uk` | Badger 3 medic: Badger 3-2 critical, massive bleeding from the leg; I'm running out of blood, need two units | CASUALTY sol-14 CRITICAL + LOW_STOCK med-3 blood_oneg x2 |
 | `badger1-stock-uk` | Badger 1 medic: running out of tourniquets, need three, and two haemostatic gauze | LOW_STOCK med-1 tourniquet x3, hemostatic_gauze x2 |
 | `badger1-wounded-en` | (English) Badger 1 medic: Badger 1-4 wounded, shrapnel to the arm | CASUALTY sol-04 WOUNDED |
+| `badger2-threat-uk` | Badger 2 medic: enemy drone 800 m north-east, close 500 m | NO_FLY_ZONE from med-2, 800 m at 45 degrees, radius 500 m (+ uncertainty) |
 
 ## Try it
 

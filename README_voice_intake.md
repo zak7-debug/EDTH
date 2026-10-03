@@ -91,19 +91,18 @@ python voice/transcribe.py samples/driver_blockage_uk.wav
 
 ```bash
 # One clip
-python voice/pipeline.py --file samples/driver_blockage_uk.wav --user driver_12
+python -m voice.pipeline --file call.wav --speaker "Борсук один, медик"
 
 # Live microphone (push-to-talk)
-python voice/pipeline.py --mic --user medic_03
+python -m voice.pipeline --mic --speaker "Борсук три, медик"   # needs: pip install sounddevice
 ```
 
 ## Layout
 
 ```
 voice/
-  pipeline.py        # orchestrates the stages
-  transcribe.py      # VAD + language ID + faster-whisper
-  extract.py         # rules + LLM JSON extraction
+  pipeline.py        # records or loads a call and posts it to /voice; the server transcribes and parses
+  (speech to text and parsing live in backend/app/voice.py, behind POST /voice)
   intents.yaml       # event types and trigger phrases
   supplies.yaml      # item keywords -> catalogue IDs
 samples/             # test clips with expected JSON

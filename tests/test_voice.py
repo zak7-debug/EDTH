@@ -69,3 +69,42 @@ def test_voice_endpoint_dispatches(monkeypatch):
             assert ws.receive_json()["type"] == "event"
         assert client.post("/voice/text", json={"text": "Badger one-two critical"}).json()["events"][0]["subject_id"] == "sol-02"
         assert client.post("/voice?clip=missing", content=b"").status_code == 503
+
+
+def test_speaker_callsign_in_ukrainian(monkeypatch):
+    """voice/pipeline.py --speaker: the device's own callsign stands in for the one the medic didn't say."""
+    monkeypatch.setenv("EDTH_REPO", "memory")
+    from backend.app import dev_server
+    dev_server.world = dev_server.World()
+    with TestClient(dev_server.app) as client:
+        body = {"text": "Закінчуються турнікети, потрібно три.", "speaker": "Борсук один, медик"}
+        r = client.post("/voice/text", json=body).json()
+        assert [(e["type"], e["subject_id"]) for e in r["events"]] == [("LOW_STOCK", "med-1")]
+        assert r["transcript"] == body["text"]  # shown as heard; the speaker isn't added to it
+        assert client.post("/voice/text", json={"text": body["text"]}).json()["events"] == []
+
+
+def test_ukrainian_threat_clip_is_a_no_fly_zone():
+    r = parse_report(_clip("badger2-threat-uk"), _ids())
+    assert [(e["type"], e["subject_id"]) for e in r.events] == [("NO_FLY_ZONE", "med-2")]
+    e = r.events[0]
+    assert (e["distance_m"], e["bearing_deg"], e["radius_m"]) == (800, 45, 500)
+
+
+def test_asking_for_a_drone_is_not_a_threat():
+    r = parse_report("Борсук один, медик. Надішліть дрон, потрібно два турнікети.", _ids())
+    assert [e["type"] for e in r.events] == ["LOW_STOCK"] and r.unparsed == []
+
+
+def test_truck_driver_reports_from_device_position(monkeypatch):
+    """A driver isn't in the graph: /voice/text with lat/lon places their report there."""
+    monkeypatch.setenv("EDTH_REPO", "memory")
+    from backend.app import dev_server
+    dev_server.world = dev_server.World()
+    with TestClient(dev_server.app) as client:
+        r = client.post("/voice/text", json={"text": "Водій. Дорога заблокована, вирва.", "lat": 47.672, "lon": 35.585}).json()
+        assert [e["type"] for e in r["events"]] == ["ROAD_BLOCKED"] and r["unparsed"] == []
+        assert r["english"] == "DRIVER reports road blocked at their position."
+        assert r["results"][0]["zone"]["properties"]["kind"] == "ROAD_BLOCKED"
+        r = client.post("/voice/text", json={"text": "Дорога заблокована."}).json()
+        assert r["events"] == [] and "no callsign" in r["unparsed"][0]

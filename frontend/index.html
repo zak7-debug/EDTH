@@ -121,6 +121,15 @@
   .pane .hint { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
   .pane .group { background: rgba(255,255,255,.05); border-radius: var(--r-md); padding: 10px 10px 2px; margin-bottom: 10px; }
   .pane .group h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 2px 4px 8px; font-weight: 600; }
+  /* Radio (voice reports, voice.py + geo/) */
+  #dock button[data-pane=radio] svg { color: #64d2ff; }
+  #dock button.rec { background: rgba(255,69,58,.35); }
+  #radioText { width: 100%; box-sizing: border-box; min-height: 56px; resize: vertical; font: inherit; font-size: 15px; background: rgba(255,255,255,.08); color: var(--text); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 10px; }
+  #talkBtn.rec { background: rgba(255,69,58,.4); }
+  #radioOut { font-size: 14px; line-height: 1.4; } #radioOut div { margin: 3px 0; }
+  #radioOut .k { color: var(--muted); display: inline-block; min-width: 82px; }
+  #radioOut .ev { color: var(--ok); } #radioOut .un { color: var(--wounded); } #radioOut q { font-style: italic; }
+  .clips { display: flex; flex-wrap: wrap; gap: 6px; } .clips button { flex: 1 1 45%; font-size: 14px; }
   #blockList .b { display: flex; align-items: center; gap: 10px; padding: 6px 4px; border-top: 1px solid var(--faint); font-size: 15px; }
   #blockList .b:first-child { border-top: 0; } #blockList .b .ic { font-size: 18px; } #blockList .b span { flex: 1; }
   #blockList .b small { color: var(--muted); display: block; font-size: 13px; }
@@ -293,6 +302,7 @@
 <nav id="dock" class="glass" aria-label="Actions">
   <button data-pane="casualty" title="Report a casualty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>Casualty</button>
   <button data-pane="restock" title="Medic low on stock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"/><path d="M3 7.5 12 12l9-4.5M12 12v9"/></svg>Restock</button>
+  <button data-pane="radio" title="Voice report: medics, drone pilots, truck drivers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>Radio</button>
   <div class="sep"></div>
   <button data-pane="threat" title="Report a threat zone (closes air and roads)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17v.01"/></svg>Threat</button>
   <button data-pane="block" title="Block a road or rail line (ground only)"><span class="badge" id="blockCount" style="display:none">0</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"/><path d="M7.5 12h9"/></svg>Block</button>
@@ -315,6 +325,21 @@
     <div class="group"><h3>What</h3><div class="row"><select id="itemSel"></select><input id="qty" type="number" min="1" value="2" aria-label="quantity"></div></div>
     <div class="group"><h3>How soon</h3><div class="row"><div class="seg grow" id="urgSeg"><button data-urg="CRITICAL">Critical</button><button data-urg="URGENT" class="on">Urgent</button><button data-urg="NON_URGENT">Routine</button></div></div></div>
     <div class="row"><button class="primary grow" id="lowBtn">Request restock</button></div>
+  </div>
+  <div class="pane" data-pane="radio">
+    <h2>Radio <button class="ghost x" data-close>✕</button></h2>
+    <p class="hint">A spoken report in Ukrainian (or English) becomes the same casualty, restock or zone as the buttons.</p>
+    <div class="group"><h3>Scripted calls</h3><div class="clips" id="clipBtns"></div></div>
+    <div class="group" id="radioOut"><h3>Last report</h3><div class="empty" style="padding:0 4px 8px">Nothing heard yet</div></div>
+    <div class="group"><h3>Who is speaking</h3>
+      <div class="row"><select id="speakerSel"></select></div>
+      <div class="row" id="driverRow" style="display:none"><button class="grow small" id="driverPosBtn">📍 Set driver position on map</button></div>
+    </div>
+    <div class="group"><h3>Speak or type</h3>
+      <div class="row"><button class="primary grow" id="talkBtn">🎙 Hold to talk</button></div>
+      <div class="row"><textarea id="radioText" placeholder="Закінчуються турнікети, потрібно три"></textarea></div>
+      <div class="row"><button class="grow" id="radioSend">Send text</button></div>
+    </div>
   </div>
   <div class="pane" data-pane="threat">
     <h2>Threat <button class="ghost x" data-close>✕</button></h2>
@@ -591,6 +616,38 @@ function clearRoute(requestId) {
 }
 
 // HOOK: the `snapshot` message (and GET /state, and the mock) all land here.
+// Zones from spoken reports (geo/, README_audio_geolocation.md), keyed by id so an update redraws the
+// zone and expiry removes it. The filled shape is what routing avoids (spoken radius + uncertainty); the
+// dot and dotted ring are where the speaker put it and how far off that could be.
+const geoZones = {};
+const GEO_COLOR = { NO_FLY_ZONE: '#ff453a', NO_GO_AREA: '#ff9f0a', ROAD_BLOCKED: '#ff9f0a' };
+const GEO_LABEL = { NO_FLY_ZONE: 'No-fly zone', NO_GO_AREA: 'No-go area', ROAD_BLOCKED: 'Road blocked' };
+function removeGeoZone(id) {
+  if (geoZones[id]) { layers.zones.removeLayer(geoZones[id]); delete geoZones[id]; }
+}
+function drawGeoZone(f) {
+  removeGeoZone(f.id);
+  const p = f.properties, color = GEO_COLOR[p.kind] || '#ff453a', unconfirmed = p.status !== 'confirmed';
+  const g = L.layerGroup();
+  if (p.kind === 'ROAD_BLOCKED' && p.edge) {
+    L.polyline(p.edge, { color, weight: 7, opacity: .9, dashArray: unconfirmed ? '8 6' : null }).addTo(g);
+  } else {
+    const ring = f.geometry.coordinates[0].map(([lon, lat]) => [lat, lon]);
+    L.polygon(ring, { color, weight: 2, fillColor: color, fillOpacity: unconfirmed ? .12 : .25,
+                      dashArray: unconfirmed ? '6 4' : null }).addTo(g);
+  }
+  L.circle(p.centre, { radius: p.uncertainty_m, color, weight: 1, dashArray: '2 5', fill: false, interactive: false }).addTo(g);
+  const expires = new Date(p.expires_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  L.circleMarker(p.centre, { radius: 4, color: '#fff', weight: 1, fillColor: color, fillOpacity: 1 })
+    .bindTooltip(`${GEO_LABEL[p.kind] || p.name} (radio)${unconfirmed ? ', unconfirmed' : ''}`, { direction: 'top', className: 'lbl' })
+    .bindPopup(`<b>${esc(GEO_LABEL[p.kind] || p.name)}</b> (${esc(p.status)})<br>` +
+      `Radius ${Math.round(p.radius_m)} m, position ±${Math.round(p.uncertainty_m)} m<br>` +
+      `${p.reports} report${p.reports > 1 ? 's' : ''}, expires ${expires}` +
+      (p.assumptions.length ? `<br>${esc(p.assumptions.join('; '))}` : '')).addTo(g);
+  g.addTo(layers.zones);
+  geoZones[f.id] = g;
+}
+
 function loadSnapshot(data) {
   Object.values(layers).forEach(l => l.clearLayers());
   for (const k in shipMarkers) delete shipMarkers[k];
@@ -600,7 +657,10 @@ function loadSnapshot(data) {
   S = { units: byId(data.units), personnel: byId(data.personnel), drones: byId(data.drones),
         depots: byId(data.depots), facilities: byId(data.facilities), links: data.supply_links || [] };
 
+  for (const k in geoZones) delete geoZones[k];  // layers were just cleared
+  fetch(API + '/zones').then(r => r.json()).then(fc => (fc.features || []).forEach(drawGeoZone)).catch(() => {});
   for (const z of data.no_fly_zones || []) {
+    if (String(z.id).startsWith('geo-')) continue;  // a spoken report: drawn from GET /zones with its uncertainty ring
     L.polygon(z.polygon, { color: '#ff453a', weight: 2, fillColor: '#ff453a', fillOpacity: .18, dashArray: '6 4' })
       .bindTooltip(z.name, { permanent: true, direction: 'center', className: 'lbl' }).addTo(layers.zones);
   }
@@ -789,9 +849,28 @@ const handlers = {
         `<span class="${q.kind === 'write' ? 'w' : ''}">${esc(q.graph)}</span> ${esc(q.cypher)}</div>`).join('');
   },
   zone_added(z) {
+    if (String(z.id).startsWith('geo-')) return;  // a spoken report: zone_created / zone_updated draw it
     L.polygon(z.polygon, { color: '#f85149', weight: 3, fillColor: '#f85149', fillOpacity: .25, className: 'new-zone' })
       .bindTooltip(z.name, { permanent: true, direction: 'center', className: 'lbl' }).addTo(layers.zones);
     log(`<span class="sev-CRITICAL">THREAT</span> reported: ${esc(z.name)}`, 'nod');
+  },
+  zone_created(f) {
+    drawGeoZone(f);
+    const p = f.properties;
+    const size = p.kind === 'ROAD_BLOCKED'
+      ? `snapped to the nearest road, position ±${Math.round(p.uncertainty_m)} m`
+      : `radius ${Math.round(p.effective_radius_m)} m incl. ±${Math.round(p.uncertainty_m)} m`;
+    log(`<span class="sev-CRITICAL">${esc((GEO_LABEL[p.kind] || p.name).toUpperCase())}</span> from a radio report, ` +
+        `${size} (${esc(p.status)})`, 'nod');
+  },
+  zone_updated(f) {
+    drawGeoZone(f);
+    const p = f.properties;
+    log(`${esc(GEO_LABEL[p.kind] || p.name)} reported again: ${p.reports} reports, ${esc(p.status)}`, 'nod');
+  },
+  zone_expired(f) {
+    removeGeoZone(f.id);
+    log(`${esc(GEO_LABEL[f.properties.kind] || f.properties.name)} ${f.reason === 'operator' ? 'cleared by operator' : 'expired'}`);
   },
   // A drone already flying changed course: redraw from where it is now.
   reroute(r) {
@@ -1150,6 +1229,7 @@ function fillTriggers() {
   const opts = list => list.map(p => `<option value="${p.id}">${esc(p.callsign)}</option>`).join('');
   document.getElementById('soldierSel').innerHTML = opts(people.filter(p => p.kind === 'SOLDIER'));
   document.getElementById('medicSel').innerHTML = opts(people.filter(p => p.kind === 'MEDIC'));
+  fillSpeakers(people.filter(p => p.kind === 'MEDIC'));
   const items = new Set(people.flatMap(p => Object.keys(p.stock || {})));
   document.getElementById('droneSel').innerHTML = Object.values(S.drones).map(d => `<option value="${d.id}">${esc(d.callsign)}</option>`).join('');
   document.getElementById('itemSel').innerHTML = [...items].map(i => `<option value="${i}">${esc(itemName(i))}</option>`).join('');
@@ -1242,12 +1322,12 @@ function linksNear(latlng, mode, px) {
 // Placing something on the map: arm, then the next tap places it. Esc cancels.
 let placing = null;
 const PLACE_HINT = { threat: 'Tap the map where the threat is', road: 'Tap the road to block',
-  rail: 'Tap a dashed rail line to cut it' };
+  rail: 'Tap a dashed rail line to cut it', driver: "Tap the map where the truck driver is" };
 function arm(kind) {
   placing = kind;
   document.getElementById('mapwrap').classList.add('placing');
   closeSheet();
-  document.querySelector(`#dock button[data-pane="${kind === 'threat' ? 'threat' : 'block'}"]`).classList.add('armed');
+  document.querySelector(`#dock button[data-pane="${{ threat: 'threat', driver: 'radio' }[kind] || 'block'}"]`).classList.add('armed');
   if (kind === 'rail') setChainView(true);
   toast(PLACE_HINT[kind] + ' · Esc to cancel');
 }
@@ -1263,6 +1343,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') { disarm(); 
 map.on('click', e => {
   if (!placing) { closeSheet(); return; }
   const at = { lat: e.latlng.lat, lon: e.latlng.lng };
+  if (placing === 'driver') { setDriverPos(at); disarm(); openSheet('radio'); return; }
   if (placing === 'threat') post('/threats', { name: 'Reported threat', ...at, radius_m: 800 });  // TUNE: radius
   else if (placing === 'road') post('/blocks', { kind: 'ROAD', ...at, links: linksNear(e.latlng, 'TRUCK', PICK_PX) });
   else {
@@ -1272,6 +1353,111 @@ map.on('click', e => {
   }
   disarm();
 });
+
+// ---------------------------------------------------------------------------------------------
+// Radio (voice.py, geo/): a medic, drone pilot or truck driver speaks; the server transcribes it
+// (faster-whisper, offline), parses it and runs the same events as the buttons above. Medics are
+// identified by their Ukrainian callsign («Борсук один, медик»), said in the call or picked here.
+// Truck drivers aren't in the graph, so their position is set on the map (the phone's GPS in real use).
+// ---------------------------------------------------------------------------------------------
+// DEMO: scripted calls in frontend/audio/ (<name>.txt is the line; <name>.wav etc. if recorded).
+const CLIPS = [
+  { name: 'badger3-critical-uk', label: '🩸 Medic: critical + blood' },
+  { name: 'badger1-stock-uk', label: '📦 Medic: low on tourniquets' },
+  { name: 'badger2-threat-uk', label: '⚠️ Medic: enemy drone' },
+  { name: 'driver-road-uk', label: '🚚 Driver: road blocked', driver: true },
+  { name: 'badger1-wounded-en', label: '🇬🇧 Medic: wounded (EN)' },
+];
+const DRIVER_DEFAULT = { lat: 47.672, lon: 35.585 };  // DEMO: a truck on the sector roads (fictional)
+const UK_NUM = ['нуль', 'один', 'два', 'три', 'чотири', "п'ять", 'шість', 'сім', 'вісім', "дев'ять"];
+const UK_SQUAD = { BADGER: 'Борсук' };
+let driverPos = null, driverMarker = null;
+function ukCallsign(cs) {  // "BADGER 1-DOC" -> "Борсук один, медик"
+  const m = /^(\w+) (\d)-DOC$/.exec(cs);
+  return m ? `${UK_SQUAD[m[1]] || m[1]} ${UK_NUM[+m[2]]}, медик` : cs;
+}
+function fillSpeakers(medics) {
+  const sel = document.getElementById('speakerSel'), keep = sel.value;
+  sel.innerHTML = '<option value="">Said in the call</option>' +
+    medics.map(p => `<option value="${esc(ukCallsign(p.callsign))}">${esc(ukCallsign(p.callsign))} (${esc(p.callsign)})</option>`).join('') +
+    '<option value="DRIVER">Водій вантажівки (truck driver)</option>';
+  sel.value = keep;
+}
+function setDriverPos(at) {
+  driverPos = at;
+  if (driverMarker) layers.zones.removeLayer(driverMarker);
+  driverMarker = L.marker([at.lat, at.lon], { icon: L.divIcon({ className: '', html: '<div style="font-size:22px">🚚</div>', iconSize: [24, 24], iconAnchor: [12, 12] }) })
+    .bindTooltip('Driver reporting', { direction: 'top', className: 'lbl' }).addTo(layers.zones);
+  document.getElementById('driverPosBtn').textContent = `📍 Driver at ${at.lat.toFixed(3)}, ${at.lon.toFixed(3)} (change)`;
+}
+function voiceParams(clip) {
+  const sel = document.getElementById('speakerSel').value, q = new URLSearchParams();
+  if (clip) q.set('clip', clip.name);
+  if (sel === 'DRIVER' || (clip && clip.driver)) {
+    if (!driverPos) setDriverPos(DRIVER_DEFAULT);
+    q.set('lat', driverPos.lat); q.set('lon', driverPos.lon);
+  } else if (sel && !clip) q.set('speaker', sel);
+  return q;
+}
+function showRadio(r, wallMs) {
+  const out = document.getElementById('radioOut');
+  if (r.detail) { out.innerHTML = `<h3>Last report</h3><div class="un">${esc(String(r.detail))}</div>`; return; }
+  const ev = r.events.map((e, i) => {
+    const res = r.results[i] || {};
+    const what = res.drone_id ? `${esc(name(res.drone_id))}, ETA ${fmtEta(res.eta_s)}, decided in ${res.latency_ms} ms`
+      : res.zone ? `${esc((GEO_LABEL[res.zone.properties.kind] || 'zone').toLowerCase())} on the map${res.rerouted && res.rerouted.length ? `, ${res.rerouted.length} rerouted` : ''}`
+      : e.type === 'CASUALTY' ? (res.evacuation ? 'evacuation started' : 'status set')
+      : `no drone yet: ${esc(res.reason || 'queued')}`;
+    return `<div class="ev">${esc(e.callsign)}: ${esc(e.type.replace('_', ' ').toLowerCase())} → ${what}</div>`;
+  }).join('');
+  const uk = /[\u0400-\u04FF]/.test(r.transcript) ? `<div><span class="k">Heard</span><q>${esc(r.transcript)}</q></div>` : '';
+  out.innerHTML = `<h3>Last report</h3>${uk}<div><span class="k">Understood</span>${esc(r.english || '–')}</div>${ev}` +
+    r.unparsed.map(u => `<div class="un">Not acted on: ${esc(u)}</div>`).join('') +
+    `<div><span class="k">Timings</span>speech ${r.stt_ms} ms (${esc(r.stt)}), parse ${r.parse_ms} ms, total ${wallMs} ms</div>`;
+}
+async function sendVoice(path, body, headers) {
+  const t = performance.now();
+  try {
+    const r = await fetch(API + path, { method: 'POST', body, headers });
+    showRadio(await r.json(), Math.round(performance.now() - t));
+  } catch (e) { toast('Backend not reachable: start it with ./start.sh'); }
+}
+document.getElementById('clipBtns').innerHTML = CLIPS.map((c, i) => `<button class="small" data-clip="${i}">${c.label}</button>`).join('');
+document.querySelectorAll('#clipBtns button').forEach(b => b.onclick = async () => {
+  const clip = CLIPS[+b.dataset.clip];
+  let audio = null;
+  for (const ext of ['wav', 'mp3', 'webm', 'ogg']) {  // play the recording if there is one; the server falls back to the line
+    const r = await fetch(`${API}/audio/${clip.name}.${ext}`).catch(() => null);
+    if (r && r.ok) { audio = await r.blob(); new Audio(URL.createObjectURL(audio)).play(); break; }
+  }
+  sendVoice(`/voice?${voiceParams(clip)}`, audio || new Blob([]));
+});
+document.getElementById('speakerSel').onchange = e => {
+  const driver = e.target.value === 'DRIVER';
+  document.getElementById('driverRow').style.display = driver ? '' : 'none';
+  if (driver && !driverPos) setDriverPos(DRIVER_DEFAULT);
+};
+document.getElementById('driverPosBtn').onclick = () => arm('driver');
+document.getElementById('radioSend').onclick = () => {
+  const text = document.getElementById('radioText').value.trim();
+  if (!text) return;
+  const q = voiceParams(null), body = { text, language: /[\u0400-\u04FF]/.test(text) ? 'uk' : 'en' };
+  if (q.get('speaker')) body.speaker = q.get('speaker');
+  if (q.get('lat')) { body.lat = +q.get('lat'); body.lon = +q.get('lon'); }
+  sendVoice('/voice/text', JSON.stringify(body), { 'Content-Type': 'application/json' });
+};
+let rec = null, chunks = [];
+const talk = document.getElementById('talkBtn');
+async function startTalk() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  rec = new MediaRecorder(stream); chunks = [];
+  rec.ondataavailable = e => chunks.push(e.data);
+  rec.onstop = () => { stream.getTracks().forEach(t => t.stop()); sendVoice(`/voice?${voiceParams(null)}`, new Blob(chunks, { type: rec.mimeType })); };
+  rec.start(); talk.classList.add('rec'); talk.textContent = '● Recording… release to send';
+}
+function stopTalk() { if (rec && rec.state === 'recording') rec.stop(); talk.classList.remove('rec'); talk.textContent = '🎙 Hold to talk'; }
+talk.onpointerdown = () => startTalk().catch(e => toast('Microphone: ' + e.message));
+talk.onpointerup = stopTalk; talk.onpointerleave = stopTalk;
 
 // Dock and sheet: the first layer picks a group, the second shows its controls.
 function openSheet(pane) {
