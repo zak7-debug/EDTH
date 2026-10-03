@@ -77,6 +77,25 @@ Every write goes through `_write()`, which opens a change, runs the queries, com
 
 **To change:** edit the tables at the top of `seed.py` (`_DRONES`, `DEPOTS`, `NO_FLY_ZONES`, `_MEDIC_STOCK`, `_SQUAD_CENTRES`). `python -m backend.app.seed` prints the counts; `pytest` checks the candidate sets, so update `test_find_candidate_drones` if you change payloads.
 
+## 5b. The full medical supply chain
+
+**What it does:** the logistics graph models every level, not just drones:
+
+```text
+Supplier (rear)  ──SUPPLIES──>  Distribution centre / Hospital  ──SUPPLIES──>  Depot  <──BASED_AT──  Drone  ──DISPATCHED_TO──>  Medic / Soldier
+```
+
+Each level holds stock (`STOCKS {qty}` edges to the same `SupplyItem` nodes drones `CARRIES`), and each `SUPPLIES` link has a lead time and a transport mode. Seeded: 2 suppliers (Nuremberg and Regensburg areas), 2 distribution centres, a Role 2 field hospital near Main Post and a Role 3 hospital near Weiden, 10 links.
+
+**Why it matters for the final product:**
+- **The pitch:** one graph shows the whole chain from factory to wounded soldier. A question like "which facility can restock Range 301 with blood, and how fast?" is a single 2-hop query (`find_resupply_sources`), which is exactly what graph databases are good at.
+- **The "no drone available" answer gets better:** instead of only "nothing carries blood", the engine can say "drn-07 can serve after reloading at Range 301, restocked from Vilseck forward distribution point in 20 min".
+- **Later:** hospitals are where casualties get evacuated to, so a CASEVAC extension has its destinations already.
+
+The real-time dispatch path is unchanged: drones still launch from depots, and the upstream levels are read only when explaining or planning resupply. That keeps the sub-second dispatch untouched.
+
+**To change:** the `FACILITIES` and `SUPPLY_LINKS` tables in `seed.py`. Range 301 (`dep-02`) is deliberately short of blood, and the field hospital holds no chest seals, so resupply answers differ by item.
+
 ## 6. Event and WebSocket formats (`contracts/messages.md`, `backend/app/messages.py`)
 
 **What it does:** fixes the JSON for everything that crosses a boundary: events into `POST /events`, and the seven message types out on `/ws` (`snapshot`, `event`, `dispatch`, `no_dispatch`, `drone_update`, `delivered`, `queue`). `messages.py` has one builder per type so the backend can't drift from the contract.

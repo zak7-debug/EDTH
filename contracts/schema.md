@@ -2,7 +2,9 @@
 
 Two TuringDB graphs, `personnel` and `logistics`. The code version is `backend/app/turing_repo.py`; the Python types are in `backend/app/models.py`.
 
-Ids carry a type prefix: `sol-07`, `med-2`, `unit-1`, `drn-04`, `dep-01`, `nfz-1`. Coordinates are WGS84 degrees, distances metres, speeds m/s, timestamps epoch seconds.
+Ids carry a type prefix: `sol-07`, `med-2`, `unit-1`, `drn-04`, `dep-01`, `nfz-1`, `sup-01`, `dc-01`, `hos-01`.
+
+The logistics graph holds the whole medical supply chain, rear to front: `Supplier` → `DistributionCentre` / `Hospital` → `Depot` → `Drone` → (personnel graph) `Medic` / `Soldier`. Coordinates are WGS84 degrees, distances metres, speeds m/s, timestamps epoch seconds.
 
 Supply vocabulary (everywhere: events, medic stock, drone payload): `tourniquet`, `blood_oneg`, `chest_seal`, `hemostatic_gauze`, `morphine_autoinjector`.
 
@@ -21,7 +23,10 @@ Edges: `(Soldier)-[:MEMBER_OF]->(Unit)`, `(Medic)-[:ATTACHED_TO]->(Unit)`.
 | Node | Properties |
 | --- | --- |
 | `Drone` | id, callsign, depot_id, lat, lon, speed_mps, range_m (remaining), max_range_m, capacity, status (`IDLE`/`EN_ROUTE`/`RETURNING`/`CHARGING`), claimed_by (`''` when free) |
-| `Depot` | id, name, lat, lon |
+| `Depot` | id, name, lat, lon (drone launch site; stock via `STOCKS`) |
+| `Supplier` | id, kind=`SUPPLIER`, name, lat, lon (rear: pharma / blood service) |
+| `DistributionCentre` | id, kind=`DISTRIBUTION_CENTRE`, name, lat, lon |
+| `Hospital` | id, kind=`HOSPITAL`, name, lat, lon, role (`ROLE_2`/`ROLE_3`), beds |
 | `SupplyItem` | id (one node per item in the vocabulary) |
 | `NoFlyZone` | id, name, polygon_json (`[[lat, lon], ...]`) |
 | `Recipient` | id (the person's id; a stand-in because edges cannot cross graphs) |
@@ -29,6 +34,8 @@ Edges: `(Soldier)-[:MEMBER_OF]->(Unit)`, `(Medic)-[:ATTACHED_TO]->(Unit)`.
 Edges:
 - `(Drone)-[:BASED_AT]->(Depot)`
 - `(Drone)-[:CARRIES {qty}]->(SupplyItem)`
+- `(Supplier|DistributionCentre|Hospital|Depot)-[:STOCKS {qty}]->(SupplyItem)`
+- `(Supplier)-[:SUPPLIES {lead_time_min, mode}]->(DistributionCentre|Hospital)`, `(DistributionCentre|Hospital)-[:SUPPLIES {...}]->(Depot)`; `mode` is `TRUCK`/`HELO`/`DRONE`
 - `(Drone)-[:DISPATCHED_TO {request_id, eta_s, distance_m, ts, latency_ms, status, items_json, route_json, delivered_ts}]->(Recipient)`
 
 ## Rules TuringDB imposes

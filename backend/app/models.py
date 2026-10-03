@@ -1,6 +1,10 @@
 """Shared data model. Every layer (repo, dispatch, API, simulator) speaks these types.
 
-Ids carry a type prefix: sol-07, med-02, unit-1, drn-04, dep-01, nfz-1.
+Ids carry a type prefix: sol-07, med-2, unit-1, drn-04, dep-01, nfz-1, sup-01, dc-01, hos-01.
+
+The medical supply chain, rear to front:
+  Supplier -> DistributionCentre / Hospital -> Depot (drone launch site) -> Drone -> Medic / Soldier
+Each level holds stock (Facility.stock, Depot.stock); SupplyLink says who restocks whom.
 Coordinates are WGS84 decimal degrees. Distances in metres, speeds in m/s, times in seconds
 (epoch seconds for timestamps).
 """
@@ -54,12 +58,49 @@ class Person:
         return asdict(self)
 
 
+FacilityKind = Literal["SUPPLIER", "DISTRIBUTION_CENTRE", "HOSPITAL"]
+TransportMode = Literal["TRUCK", "HELO", "DRONE"]
+
+
 @dataclass
 class Depot:
+    """Drone launch site, the last link before the battlefield. Drones reload from its stock."""
     id: str
     name: str
     lat: float
     lon: float
+    stock: dict[str, int] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
+class Facility:
+    """Upstream medical node: a supplier (rear), a distribution centre, or a hospital.
+
+    Hospitals both hold stock (e.g. a blood bank that can restock a nearby depot) and are where
+    casualties are evacuated to; `role` is the NATO treatment level (ROLE_2, ROLE_3)."""
+    id: str
+    kind: FacilityKind
+    name: str
+    lat: float
+    lon: float
+    stock: dict[str, int] = field(default_factory=dict)
+    role: str = ""  # hospitals only
+    beds: int = 0  # hospitals only
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
+class SupplyLink:
+    """src restocks dst (Supplier -> DC/Hospital, DC/Hospital -> Depot)."""
+    src_id: str
+    dst_id: str
+    lead_time_min: float
+    mode: TransportMode = "TRUCK"
 
     def to_dict(self) -> dict:
         return asdict(self)

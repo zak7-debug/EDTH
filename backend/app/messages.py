@@ -26,6 +26,8 @@ def snapshot(repo: GraphRepo) -> dict:
         "drones": [d.to_dict() for d in repo.list_drones()],
         "depots": [d.to_dict() for d in repo.list_depots()],
         "no_fly_zones": [z.to_dict() for z in repo.list_no_fly_zones()],
+        "facilities": [f.to_dict() for f in repo.list_facilities()],
+        "supply_links": [link.to_dict() for link in repo.list_supply_links()],
         "dispatches": [d.to_dict() for d in repo.list_dispatches() if d.status == "EN_ROUTE"],
     })
 

@@ -24,7 +24,7 @@ One socket. Every message is `{"type": ..., "data": ...}`.
 
 | type | Sent when | data |
 | --- | --- | --- |
-| `snapshot` | on connect | `units`, `personnel`, `drones`, `depots`, `no_fly_zones`, `dispatches` (active ones), each a list of the model dicts |
+| `snapshot` | on connect | `units`, `personnel`, `drones`, `depots` (with `stock`), `no_fly_zones`, `facilities` (suppliers, distribution centres, hospitals, with `stock`), `supply_links` (`src_id`, `dst_id`, `lead_time_min`, `mode`), `dispatches` (active ones), each a list of the model dicts |
 | `event` | event received | the event fields plus `received_ts` |
 | `dispatch` | drone assigned | `request_id`, `drone_id`, `recipient_id`, `items`, `eta_s`, `distance_m`, `route` (list of `[lat, lon]`), `latency_ms`, `ts`, `status` |
 | `no_dispatch` | no drone fits | `request_id`, `recipient_id`, `reason` (text), `reason_code` (`NO_STOCK`/`ALL_BUSY`/`OUT_OF_RANGE`), `nearest_alternative` (`{drone_id, eta_s, note}` or null), `latency_ms` |

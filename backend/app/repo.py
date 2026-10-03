@@ -18,7 +18,7 @@ import threading
 import time
 from typing import Optional, Protocol
 
-from .models import Depot, Dispatch, Drone, NoFlyZone, Person, Unit
+from .models import Depot, Dispatch, Drone, Facility, NoFlyZone, Person, SupplyLink, Unit
 from .seed import SeedData, load_seed
 
 
@@ -34,6 +34,11 @@ class GraphRepo(Protocol):
     def list_drones(self) -> list[Drone]: ...
     def list_depots(self) -> list[Depot]: ...
     def list_no_fly_zones(self) -> list[NoFlyZone]: ...
+    def list_facilities(self) -> list[Facility]: ...
+    def list_supply_links(self) -> list[SupplyLink]: ...
+    def find_resupply_sources(self, depot_id: str, items: dict[str, int]) -> list[tuple[Facility, SupplyLink]]:
+        """Upstream facilities that restock `depot_id` and hold enough of `items`, fastest first."""
+        ...
     def find_candidate_drones(self, items: dict[str, int]) -> list[Drone]:
         """IDLE, unclaimed drones carrying at least `items`. One query on TuringDB."""
         ...
@@ -66,6 +71,8 @@ class InMemoryRepo:
         self.depots = {d.id: d for d in seed.depots}
         self.drones = {d.id: d for d in seed.drones}
         self.no_fly_zones = {z.id: z for z in seed.no_fly_zones}
+        self.facilities = {f.id: f for f in seed.facilities}
+        self.supply_links = list(seed.supply_links)
         self.dispatches: dict[str, Dispatch] = {}
 
     # personnel
@@ -99,6 +106,20 @@ class InMemoryRepo:
 
     def list_no_fly_zones(self):
         return list(self.no_fly_zones.values())
+
+    def list_facilities(self):
+        return list(self.facilities.values())
+
+    def list_supply_links(self):
+        return list(self.supply_links)
+
+    def find_resupply_sources(self, depot_id, items):
+        out = []
+        for link in self.supply_links:
+            f = self.facilities.get(link.src_id)
+            if link.dst_id == depot_id and f and all(f.stock.get(i, 0) >= q for i, q in items.items()):
+                out.append((f, link))
+        return sorted(out, key=lambda fl: fl[1].lead_time_min)
 
     def find_candidate_drones(self, items):
         return [d for d in self.drones.values()

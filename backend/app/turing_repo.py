@@ -8,6 +8,9 @@ Schema (also in contracts/schema.md):
   logistics:  (:Drone {id, callsign, depot_id, lat, lon, speed_mps, range_m, max_range_m,
                        capacity, status, claimed_by})          claimed_by '' means unclaimed
               (:Depot {id, name, lat, lon}), (:SupplyItem {id}), (:NoFlyZone {id, name, polygon_json})
+              (:Supplier|:DistributionCentre|:Hospital {id, kind, name, lat, lon, role, beds})
+              (supplier|dc|hospital|depot)-[:STOCKS {qty}]->(item)
+              (supplier)-[:SUPPLIES {lead_time_min, mode}]->(dc|hospital)-[:SUPPLIES]->(depot)
               (:Recipient {id})  stand-in for a person, since edges cannot cross graphs
               (drone)-[:BASED_AT]->(depot), (drone)-[:CARRIES {qty}]->(item)
               (drone)-[:DISPATCHED_TO {request_id, eta_s, distance_m, ts, latency_ms, status,
@@ -32,7 +35,7 @@ from typing import Iterable, Optional
 
 from turingdb import TuringDB
 
-from .models import ITEMS, Depot, Dispatch, Drone, NoFlyZone, Person, Unit
+from .models import ITEMS, Depot, Dispatch, Drone, Facility, NoFlyZone, Person, SupplyLink, Unit
 from .seed import SeedData
 
 PERSONNEL = "personnel"
@@ -58,8 +61,9 @@ def lit(v) -> str:
 # TuringDB types each property name strictly (an Int64 property can't later be SET to a
 # Double), so numeric fields are always written with the same Python type.
 FLOAT_FIELDS = {"lat", "lon", "speed_mps", "range_m", "max_range_m", "last_update",
-                "eta_s", "distance_m", "ts", "latency_ms", "delivered_ts"}
-INT_FIELDS = {"capacity", "qty"}
+                "eta_s", "distance_m", "ts", "latency_ms", "delivered_ts", "lead_time_min"}
+INT_FIELDS = {"capacity", "qty", "beds"}
+FACILITY_LABELS = {"SUPPLIER": "Supplier", "DISTRIBUTION_CENTRE": "DistributionCentre", "HOSPITAL": "Hospital"}
 
 
 def typed(k: str, v):
@@ -165,6 +169,15 @@ class TuringRepo:
             parts = [f"({var('item-' + i)}:SupplyItem {props({'id': i})})" for i in ITEMS]
             for dep in seed.depots:
                 parts.append(f"({var(dep.id)}:Depot {props({'id': dep.id, 'name': dep.name, 'lat': dep.lat, 'lon': dep.lon})})")
+                parts += self._stocks_parts(dep.id, dep.stock)
+            for f in seed.facilities:
+                fprops = {'id': f.id, 'kind': f.kind, 'name': f.name, 'lat': f.lat, 'lon': f.lon,
+                          'role': f.role, 'beds': f.beds}
+                parts.append(f"({var(f.id)}:{FACILITY_LABELS[f.kind]} {props(fprops)})")
+                parts += self._stocks_parts(f.id, f.stock)
+            for link in seed.supply_links:
+                parts.append(f"({var(link.src_id)})-[:SUPPLIES "
+                             f"{props({'lead_time_min': link.lead_time_min, 'mode': link.mode})}]->({var(link.dst_id)})")
             for z in seed.no_fly_zones:
                 parts.append(f"({var(z.id)}:NoFlyZone {props({'id': z.id, 'name': z.name, 'polygon_json': json.dumps(z.polygon)})})")
             for d in seed.drones:
@@ -173,6 +186,17 @@ class TuringRepo:
                 for item, qty in d.payload.items():
                     parts.append(f"({var(d.id)})-[:CARRIES {{qty: {int(qty)}}}]->({var('item-' + item)})")
             self._write(self.g_logistics, ["CREATE " + ", ".join(parts)])
+
+    @staticmethod
+    def _stocks_parts(node_id: str, stock: dict[str, int]) -> list[str]:
+        return [f"({var(node_id)})-[:STOCKS {{qty: {int(q)}}}]->({var('item-' + i)})" for i, q in stock.items()]
+
+    def _stock_by_node(self) -> dict[str, dict[str, int]]:
+        df = self._read(self.g_logistics, "MATCH (n)-[k:STOCKS]->(s:SupplyItem) RETURN n.id, s.id, k.qty")
+        out: dict[str, dict[str, int]] = {}
+        for nid, item, qty in df.itertuples(index=False, name=None):
+            out.setdefault(nid, {})[item] = int(qty)
+        return out
 
     @staticmethod
     def _person_props(p: Person) -> dict:
@@ -265,7 +289,43 @@ class TuringRepo:
 
     def list_depots(self):
         df = self._read(self.g_logistics, "MATCH (d:Depot) RETURN d.id, d.name, d.lat, d.lon")
-        return [Depot(r["id"], r["name"], float(r["lat"]), float(r["lon"])) for r in _rows(df)]
+        stock = self._stock_by_node()
+        return [Depot(r["id"], r["name"], float(r["lat"]), float(r["lon"]), stock.get(r["id"], {}))
+                for r in _rows(df)]
+
+    def _facility(self, r: dict, stock: dict[str, int]) -> Facility:
+        return Facility(r["id"], r["kind"], r["name"], float(r["lat"]), float(r["lon"]), stock,
+                        role=r["role"] or "", beds=int(r["beds"] or 0))
+
+    _FACILITY_RETURN = "f.id, f.kind, f.name, f.lat, f.lon, f.role, f.beds"
+
+    def list_facilities(self):
+        stock = self._stock_by_node()
+        out = []
+        for label in FACILITY_LABELS.values():
+            df = self._read(self.g_logistics, f"MATCH (f:{label}) RETURN {self._FACILITY_RETURN}")
+            out += [self._facility(r, stock.get(r["id"], {})) for r in _rows(df)]
+        return out
+
+    def list_supply_links(self):
+        df = self._read(self.g_logistics, "MATCH (a)-[l:SUPPLIES]->(b) RETURN a.id, b.id, l.lead_time_min, l.mode")
+        return [SupplyLink(a, b, float(t), m) for a, b, t, m in df.itertuples(index=False, name=None)]
+
+    def find_resupply_sources(self, depot_id, items):
+        # One 2-hop query: who supplies this depot, and what do they hold.
+        df = self._read(self.g_logistics,
+                        "MATCH (s:SupplyItem)<-[k:STOCKS]-(f)-[l:SUPPLIES]->(d:Depot) "
+                        f"WHERE d.id = {lit(depot_id)} "
+                        f"RETURN {self._FACILITY_RETURN}, l.lead_time_min, l.mode, s.id, k.qty")
+        found: dict[str, tuple[Facility, SupplyLink]] = {}
+        keys = ("id", "kind", "name", "lat", "lon", "role", "beds")
+        for (*fvals, lead, mode, item, qty) in df.itertuples(index=False, name=None):
+            r = dict(zip(keys, fvals))
+            if r["id"] not in found:
+                found[r["id"]] = (self._facility(r, {}), SupplyLink(r["id"], depot_id, float(lead), mode))
+            found[r["id"]][0].stock[item] = int(qty)
+        ok = [fl for fl in found.values() if all(fl[0].stock.get(i, 0) >= q for i, q in items.items())]
+        return sorted(ok, key=lambda fl: fl[1].lead_time_min)
 
     def list_no_fly_zones(self):
         df = self._read(self.g_logistics, "MATCH (z:NoFlyZone) RETURN z.id, z.name, z.polygon_json")

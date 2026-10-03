@@ -86,3 +86,22 @@ def test_update_drone(repo):
     d = repo.get_drone("drn-03")
     assert (d.lat, d.lon, d.range_m) == (49.70, 11.90, 1234.0)
     assert d.payload["blood_oneg"] == 1 and d.payload["tourniquet"] == 0
+
+
+def test_supply_chain(repo):
+    facilities = {f.id: f for f in repo.list_facilities()}
+    assert {f.kind for f in facilities.values()} == {"SUPPLIER", "DISTRIBUTION_CENTRE", "HOSPITAL"}
+    assert len(facilities) == 6
+    assert facilities["hos-02"].role == "ROLE_3" and facilities["hos-02"].beds == 120
+    assert facilities["sup-02"].stock == {"blood_oneg": 200}
+    assert len(repo.list_supply_links()) == 10
+    depots = {d.id: d for d in repo.list_depots()}
+    assert depots["dep-02"].stock["blood_oneg"] == 1
+
+    # Range 301 is restocked by dc-02 (20 min) and dc-01 (25 min); both hold blood.
+    sources = repo.find_resupply_sources("dep-02", {"blood_oneg": 4})
+    assert [(f.id, link.lead_time_min) for f, link in sources] == [("dc-02", 20.0), ("dc-01", 25.0)]
+    # Main Post: the field hospital (5 min) has blood but no chest seals, so only dc-01 qualifies.
+    sources = repo.find_resupply_sources("dep-01", {"blood_oneg": 2, "chest_seal": 2})
+    assert [f.id for f, _ in sources] == ["dc-01"]
+    assert [f.id for f, _ in repo.find_resupply_sources("dep-01", {"blood_oneg": 2})] == ["hos-01", "dc-01"]
