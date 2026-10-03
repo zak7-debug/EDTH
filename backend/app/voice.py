@@ -70,7 +70,7 @@ SEVERITY_STEMS = {
 }
 ITEM_STEMS = {
     "blood_oneg": ("кров", "плазм", "blood", "plasma"),
-    "tourniquet": ("турнікет", "джгут", "tourniquet"),
+    "tourniquet": ("турнікет", "турнікіт", "турнікит", "турникет", "джгут", "tourniquet"),
     "chest_seal": ("оклюзійн", "наліпк", "seal"),
     "hemostatic_gauze": ("гемостат", "бинт", "пов'язк", "gauze", "hemostatic", "bandage"),
     "morphine_autoinjector": ("морфін", "знебол", "morphine", "painkiller"),
@@ -88,7 +88,7 @@ ZONE_INTENTS = (
     ("NO_FLY_ZONE", ("ппо", "пзрк", "перехоплюв", "шахед", "manpads", "shahed", "interceptor"), ()),
     # "дрон" alone is usually OUR drone ("надішліть дрон"): only a hostile or closed one is a threat
     ("NO_FLY_ZONE", ("дрон", "повітр", "drone", "airspace", "fly"),
-     ("ворож", "против", "загроз", "небезпе", "закри", "enemy", "hostile", "threat", "danger", "close", "no")),
+     ("ворож", "враж", "против", "загроз", "небезпе", "закри", "enemy", "hostile", "threat", "danger", "close", "no")),
 )
 NO_ENTRY = ("не заїжд", "не заход", "do not enter", "no go")  # "не заїжджати": a ground no-go area
 DIST_UNITS = METRES | KILOMETRES
@@ -125,6 +125,7 @@ class ParsedReport:
 
 def _tokens(sentence: str) -> list[str]:
     s = sentence.lower().replace("’", "'").replace("ʼ", "'").replace("`", "'")
+    s = re.sub(r"(?<=[а-яіїєґ])i|i(?=[а-яіїєґ])", "і", s)  # a Latin i inside a Ukrainian word ("Сокiл")
     s = re.sub(r"(\d)\s*[-–—]\s*(\d)", r"\1 \2", s)  # "2-4" -> "2 4"
     return re.findall(r"[\w']+", s)
 
@@ -265,6 +266,7 @@ def parse_report(text: str, callsign_ids: dict[str, str],
     speaker: Optional[str] = None  # the medic's callsign
     named_drone: Optional[str] = None  # the drone a pilot named: zones are placed from it
     report_critical = False
+    casualty_medic: Optional[str] = None  # the squad medic of the last casualty: supplies asked for later go there
     unhurt = list(unhurt or [])
     assumed: list[str] = []  # soldiers taken for an unnamed casualty
     sentences = [s for s in (s.strip() for s in re.split(r"[.!?;\n]+", text)) if s]
@@ -320,14 +322,19 @@ def parse_report(text: str, callsign_ids: dict[str, str],
             else:
                 out.events.append({"type": "CASUALTY", "subject_id": pid, "severity": severity, "callsign": cs})
                 report_critical = report_critical or severity == "CRITICAL"
+                casualty_medic = cs.rsplit("-", 1)[0] + "-DOC"
                 if items and needs:  # the squad medic treats them, so the medic gets the supplies
                     restock(cs.rsplit("-", 1)[0] + "-DOC", items,
                             "CRITICAL" if severity == "CRITICAL" else urgency or "URGENT", sentence)
         if severity and not soldiers and not any(t in DIST_UNITS for t in toks):
             # "Один поранений, важкий": no soldier named, so the next unhurt soldier(s) of the speaker's squad
-            squad = (speaker or "").removesuffix("-DOC")
+            # A squad named here ("Борсук два, поранений") is the casualty's, even if someone else is speaking
+            named = next((cs for _, cs in calls if not cs.endswith("-DOC")), None)
+            squad = named or (speaker or "").removesuffix("-DOC")
+            in_callsign = {j for i, _ in calls for j in (i + 1, i + 2)}  # "два" in "Борсук два" is not a count
             at = next(i for i, t in enumerate(sev_toks) if t.startswith(SEVERITY_STEMS["CRITICAL"] + SEVERITY_STEMS["WOUNDED"]))
-            count = next((_number(t) for t in reversed(sev_toks[max(0, at - 3):at]) if _number(t)), 1)
+            count = next((_number(sev_toks[j]) for j in range(at - 1, max(-1, at - 4), -1)
+                          if j not in in_callsign and _number(sev_toks[j])), 1)
             picks = [cs for cs in unhurt if squad and cs.startswith(f"{squad}-")][:min(count, 5)]
             if not picks:
                 out.unparsed.append(f"casualty heard but not which soldier: say their callsign, e.g. «Борсук три-два, "
@@ -339,10 +346,11 @@ def parse_report(text: str, callsign_ids: dict[str, str],
                 out.events.append({"type": "CASUALTY", "subject_id": callsign_ids[cs], "severity": severity,
                                    "callsign": cs})
                 report_critical = report_critical or severity == "CRITICAL"
+                casualty_medic = cs.rsplit("-", 1)[0] + "-DOC"
             if picks and items and needs:
                 restock(f"{squad}-DOC", items, "CRITICAL" if severity == "CRITICAL" else urgency or "URGENT", sentence)
         if items and needs and not soldiers:
-            medic = next((cs for _, cs in calls if cs.endswith("-DOC")), speaker)
+            medic = next((cs for _, cs in calls if cs.endswith("-DOC")), casualty_medic or speaker)
             restock(medic, items, urgency, sentence)
     for ev in out.events:  # unless said otherwise, running short while treating a CRITICAL casualty is CRITICAL
         if ev["type"] == "LOW_STOCK" and ev["urgency"] != "NON_URGENT":
