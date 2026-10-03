@@ -36,7 +36,7 @@ from fastapi.staticfiles import StaticFiles
 from .dispatch import DispatchEngine
 from .evac import EvacTracker
 from .flights import FlightTracker
-from . import querylog, resilience, tiles, voice
+from . import blocks, querylog, resilience, tiles, voice
 from .messages import (dispatch_msg, event_msg, no_dispatch_msg, query_log_msg, queue_msg, snapshot,
                        drone_lost_msg, supply_chain_msg, zone_added_msg)
 from .models import Dispatch, Event, NoFlyZone
@@ -106,6 +106,7 @@ class World:
     """Everything that gets rebuilt on POST /reset."""
 
     def __init__(self):
+        blocks.BLOCKS.clear()  # road and rail blocks belong to one run (blocks.py)
         self.repo = get_repo()  # HOOK: EDTH_REPO=turing|memory picks the store
         self.engine = DispatchEngine(self.repo)  # routes round threat zones by default
         self.stock = StockKeeper(self.repo)  # launch-site stock and restock orders
@@ -387,12 +388,13 @@ def index():
     return FileResponse(FRONTEND / "index.html")
 
 
-# Extra endpoints from their own modules: temporary sites (resilience.py), medic voice reports (voice.py)
-# and the satellite / roads map layers (tiles.py).
+# Extra endpoints from their own modules: temporary sites (resilience.py), medic voice reports (voice.py),
+# the satellite / roads map layers (tiles.py) and road / rail blocks (blocks.py).
 # They must be included before the static mount below, which catches every other path.
 app.include_router(resilience.router)
 app.include_router(voice.router)
 app.include_router(tiles.router)  # satellite, roads and place-name map layers
+app.include_router(blocks.router)  # road and rail blocks: trucks, ambulances and trains reroute
 
 # Anything else under frontend/ (mock/snapshot.json, assets). Mounted last so the API routes win.
 app.mount("/", StaticFiles(directory=FRONTEND), name="frontend")
