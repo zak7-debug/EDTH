@@ -248,7 +248,7 @@ def _zone_events(sentences: list[str], speaker: Optional[str], callsign_ids: dic
 def parse_report(text: str, callsign_ids: dict[str, str],
                  position: Optional[tuple[float, float]] = None,
                  drones: Optional[dict[str, tuple[str, tuple[float, float]]]] = None,
-                 unhurt: Optional[list[str]] = None) -> ParsedReport:
+                 unhurt: Optional[list[str]] = None, lost_drones: frozenset = frozenset()) -> ParsedReport:
     """Turn one radio report into partial events. callsign_ids maps "BADGER 2-4" -> "sol-10";
     drones maps "HAWK 1" -> ("drn-01", (lat, lon)); position is the reporter's device (a driver).
 
@@ -305,7 +305,7 @@ def parse_report(text: str, callsign_ids: dict[str, str],
         # Drone pilots: a named drone lost, or the drone a later threat is seen from.
         for dcs in _drones(toks):
             if dcs not in drones:
-                out.unparsed.append(f"unknown drone {dcs}")
+                out.unparsed.append(f"{dcs} was already written off" if dcs in lost_drones else f"unknown drone {dcs}")
                 continue
             named_drone = named_drone or dcs
             if _has(sentence, LOST_STEMS):
@@ -350,7 +350,9 @@ def parse_report(text: str, callsign_ids: dict[str, str],
             if picks and items and needs:
                 restock(f"{squad}-DOC", items, "CRITICAL" if severity == "CRITICAL" else urgency or "URGENT", sentence)
         if items and needs and not soldiers:
-            medic = next((cs for _, cs in calls if cs.endswith("-DOC")), casualty_medic or speaker)
+            # the medic named here ("Борсук один, ... потрібно"), else the last casualty's, else who is speaking
+            named = next((cs if cs.endswith("-DOC") else f"{cs}-DOC" for _, cs in calls), None)
+            medic = named or casualty_medic or speaker
             restock(medic, items, urgency, sentence)
     for ev in out.events:  # unless said otherwise, running short while treating a CRITICAL casualty is CRITICAL
         if ev["type"] == "LOW_STOCK" and ev["urgency"] != "NON_URGENT":
@@ -486,7 +488,8 @@ async def handle_transcript(text: str, language: Optional[str], stt: str, stt_ms
             drones[cs] = (f.drone_id, f.position())
     unhurt = sorted(p.callsign for p in world.repo.list_personnel()
                     if p.status == "OK" and re.search(r"-\d+$", p.callsign or ""))
-    parsed = parse_report(f"{speaker}. {text}" if speaker else text, callsign_ids, position, drones, unhurt)
+    lost = frozenset(d.callsign for d in world.repo.list_drones() if d.status == "LOST")
+    parsed = parse_report(f"{speaker}. {text}" if speaker else text, callsign_ids, position, drones, unhurt, lost)
     report_id = f"voice-{int(time.time())}-{next(_ids)}"
     for k, ev in enumerate(parsed.events, start=1):
         ev["event_id"] = f"{report_id}-{k}"  # becomes the dispatch's request_id
@@ -580,6 +583,11 @@ def build_readback(events: list[dict], results: list[dict], unparsed: list[str],
         else:  # spoken zones
             uk.append("Прийнято, зону нанесено на карту. Маршрути змінено.")
             en.append("Copy, zone on the map. Routes adjusted.")
+    for u in unparsed:
+        if u.endswith(" was already written off"):
+            cs = u.removesuffix(" was already written off")
+            uk.append(f"{_drone_uk(cs)} вже списано.")
+            en.append(f"{cs} is already written off.")
     if not uk:
         uk.append("Не зрозумів. Повторіть, будь ласка.")
         en.append("Didn't catch that. Say again.")
