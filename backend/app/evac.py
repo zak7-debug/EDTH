@@ -214,3 +214,28 @@ class EvacTracker:
                 msgs[0]["data"]["note"] = f"{lost} destroyed: diverting {msgs[0]['data']['note'] or ''}"
             out += msgs
         return out
+
+    def facility_added(self, facility_id: str, min_gain: float = 0.2) -> list[dict]:
+        """A temporary site was deployed: casualties still on the road whose trip it cuts by `min_gain`
+        or more switch to it. HOOK: resilience.post_deploy calls this after writing the site."""
+        out = []
+        facilities = self.repo.list_facilities()
+        f = next((x for x in facilities if x.id == facility_id), None)
+        if f is None:
+            return out
+        for t in list(self.trips.values()):
+            here = t.flight.position()
+            left = t.load_left_s + (t.flight.total_m - t.flight.flown_m) / CASEVAC_SPEED_MPS
+            best = self._fastest(here, t.evac.severity, [f], t.load_left_s)
+            if best is None or best[3] > left * (1 - min_gain):
+                continue
+            del self.trips[t.evac.evac_id]
+            self.repo.finish_evacuation(t.evac.evac_id, "DIVERTED", self.clock())  # gives the old bed back
+            person = self.repo.get_person(t.evac.person_id)
+            msgs = self.start(person, t.evac.severity, origin=here, load_s=t.load_left_s)
+            if msgs and msgs[0]["type"] == "evacuation":
+                msgs[0]["data"]["diverted_from"] = t.evac.facility_id
+                msgs[0]["data"]["note"] = (f"{f.name} deployed: diverting, {left / 60:.0f} min cut to "
+                                           f"{msgs[0]['data']['eta_s'] / 60:.0f} min. {msgs[0]['data']['note'] or ''}")
+            out += msgs
+        return out

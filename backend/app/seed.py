@@ -111,6 +111,18 @@ FACILITIES = [
     Facility("hos-02", "HOSPITAL", "Role 3 hospital (Dnipro region)", 48.4700, 35.0000,
              {"blood_oneg": 80, "tourniquet": 20, "chest_seal": 20, "hemostatic_gauze": 30, "morphine_autoinjector": 20},
              role="ROLE_3", beds=150),
+    # National tier: more hubs and a second blood source, joined by rail. Generic names, region level only.
+    Facility("sup-03", "SUPPLIER", "Pharmaceutical manufacturer (Kyiv region)", 50.3000, 30.2500,
+             {"tourniquet": 1500, "chest_seal": 800, "hemostatic_gauze": 1800, "morphine_autoinjector": 1200}),
+    Facility("sup-04", "SUPPLIER", "Regional blood centre (Dnipro region)", 48.4200, 35.1200,
+             {"blood_oneg": 150}),
+    Facility("dc-04", "DISTRIBUTION_CENTRE", "Central medical logistics hub (Vinnytsia region)", 49.2300, 28.4700,
+             {"tourniquet": 500, "blood_oneg": 30, "chest_seal": 300, "hemostatic_gauze": 500, "morphine_autoinjector": 200}),
+    Facility("dc-05", "DISTRIBUTION_CENTRE", "Regional medical depot (Poltava region)", 49.5900, 34.5500,
+             {"tourniquet": 200, "blood_oneg": 20, "chest_seal": 150, "hemostatic_gauze": 200, "morphine_autoinjector": 80}),
+    Facility("hos-03", "HOSPITAL", "Role 3 hospital (Zaporizhzhia region)", 47.8700, 35.0600,
+             {"blood_oneg": 40, "tourniquet": 15, "chest_seal": 15, "hemostatic_gauze": 20, "morphine_autoinjector": 15},
+             role="ROLE_3", beds=60),
     # DEMO: a Role 1 aid station just behind the squads, where WOUNDED casualties go first.
     # Few beds and no chest seals on purpose, so the first WOUNDED evacuation shows a drone flying
     # the missing kit there while the casualty is still on the road (evac.py).
@@ -136,6 +148,24 @@ SUPPLY_LINKS = [
     SupplyLink("dc-02", "hos-01", 30, "TRUCK"),
     SupplyLink("dep-03", "dep-01", 25, "DRONE"),  # launch sites relay stock to each other by cargo drone
     SupplyLink("dep-03", "dep-02", 20, "DRONE"),
+    # National tier: rail between region hubs, so a hub lost in the west or centre has a way round.
+    SupplyLink("sup-01", "dc-04", 600, "TRUCK"),
+    SupplyLink("dc-03", "dc-04", 420, "RAIL"),
+    SupplyLink("sup-03", "dc-04", 240, "TRUCK"),
+    SupplyLink("sup-03", "dc-05", 360, "RAIL"),
+    SupplyLink("dc-04", "dc-05", 480, "RAIL"),
+    SupplyLink("dc-04", "dc-01", 660, "RAIL"),
+    SupplyLink("dc-05", "dc-01", 240, "RAIL"),
+    SupplyLink("sup-02", "dc-05", 300, "TRUCK"),
+    # Blood comes from two places: the national service far to the north and a regional centre.
+    SupplyLink("sup-04", "hos-02", 20, "TRUCK"),
+    SupplyLink("sup-04", "dc-01", 20, "TRUCK"),
+    SupplyLink("sup-04", "hos-03", 120, "TRUCK"),
+    # The regional Role 3 hospital backs up the forward point and the sector's Role 2.
+    SupplyLink("dc-01", "hos-03", 90, "TRUCK"),
+    SupplyLink("hos-03", "dc-02", 20, "TRUCK"),
+    SupplyLink("hos-03", "hos-01", 60, "TRUCK"),
+    SupplyLink("dc-05", "dc-02", 300, "RAIL"),
 ]
 
 # (id, callsign, depot, speed m/s, range left m, max range m, capacity, status, payload)
