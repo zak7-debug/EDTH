@@ -271,6 +271,7 @@ async def reset():
     await broadcast(snapshot(world.repo))
     await broadcast(supply_chain_msg(chain_status(world.repo)))
     await broadcast(world.stock.message())
+    await broadcast(queue_msg(world.engine.pending()))  # fix: panel kept the old list after a restart
     return {"ok": True}
 
 
@@ -361,9 +362,10 @@ def index():
     return FileResponse(FRONTEND / "index.html")
 
 
-# Anything else under frontend/ (mock/snapshot.json, assets). Mounted last so the API routes win.
 # Extra endpoints from their own modules: temporary sites (resilience.py) and medic voice reports (voice.py).
 # They must be included before the static mount below, which catches every other path.
 app.include_router(resilience.router)
 app.include_router(voice.router)
+
+# Anything else under frontend/ (mock/snapshot.json, assets). Mounted last so the API routes win.
 app.mount("/", StaticFiles(directory=FRONTEND), name="frontend")
