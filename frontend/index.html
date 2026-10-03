@@ -9,8 +9,9 @@
     through the real dispatch engine and TuringDB.
   - Opened from disk with no backend, it shows mock/snapshot.js (the seed) so layout work never
     waits on the API.
-  - Map background: tiles come from the backend's /tiles cache (works offline once
-    scripts/fetch_tiles.py has run), else straight from CARTO, else an offline grid backdrop.
+  - Map background: satellite imagery (Esri) with roads and place names on top, or the dark CARTO
+    map from the layers menu. Tiles come from the backend's /tiles cache (works offline once
+    scripts/fetch_tiles.py has run), else straight from upstream, else an offline grid backdrop.
 
   Plain HTML + JavaScript + Leaflet from a CDN, no build step. Searchable tags:
     TUNE: numbers / colours to adjust   HOOK: where it talks to the backend   DEMO: demo-only behaviour
@@ -231,16 +232,29 @@ const map = L.map('map', { zoomControl: true, preferCanvas: false }).setView([47
 // to CARTO directly; if that fails too we draw an offline grid backdrop instead of a black map.
 const CARTO = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png';  // TUNE: upstream basemap
 const LOCAL_TILES = location.protocol === 'file:' ? 'tiles/{z}/{x}/{y}.png' : API + '/tiles/{z}/{x}/{y}.png';
-const base = L.tileLayer(LOCAL_TILES, { attribution: '&copy; OpenStreetMap contributors &copy; CARTO', maxZoom: 18 }).addTo(map);
+// Each layer: the backend's cache first, then (once per tile) straight from upstream. Esri orders tiles z/y/x.
+const ESRI = svc => `https://server.arcgisonline.com/ArcGIS/rest/services/${svc}/MapServer/tile/{z}/{y}/{x}`;
+const ESRI_ATTR = 'Imagery &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community';
 let tileFails = 0, tileOk = 0;
-base.on('tileerror', e => {
-  const t = e.tile;
-  if (!t.dataset.retried) {  // second chance: straight from CARTO
-    t.dataset.retried = 1;
-    t.src = L.Util.template(CARTO, { s: 'abcd'[(e.coords.x + e.coords.y) % 4], z: e.coords.z, x: e.coords.x, y: e.coords.y });
-  } else if (++tileFails >= 4 && !tileOk) showOfflineBackdrop();
-});
-base.on('tileload', () => { tileOk++; });
+function cachedTiles(local, upstream, opts, isBase) {
+  const layer = L.tileLayer(local, { maxZoom: 18, ...opts });
+  layer.on('tileerror', e => {
+    const t = e.tile;
+    if (!t.dataset.retried) {  // second chance: straight from upstream
+      t.dataset.retried = 1;
+      t.src = L.Util.template(upstream, { s: 'abcd'[(e.coords.x + e.coords.y) % 4], z: e.coords.z, x: e.coords.x, y: e.coords.y });
+    } else if (isBase && ++tileFails >= 4 && !tileOk) showOfflineBackdrop();
+  });
+  if (isBase) layer.on('tileload', () => { tileOk++; });
+  return layer;
+}
+const local = (layer, ext) => location.protocol === 'file:' ? `tiles/${layer}/{z}/{x}/{y}.${ext}` : `${API}/tiles/${layer}/{z}/{x}/{y}.${ext}`;
+const dark = cachedTiles(LOCAL_TILES, CARTO, { attribution: '&copy; OpenStreetMap contributors &copy; CARTO', zIndex: 1 }, true);
+const satellite = cachedTiles(local('sat', 'jpg'), ESRI('World_Imagery'), { attribution: ESRI_ATTR, zIndex: 1 }, true);
+const roads = cachedTiles(local('roads', 'png'), ESRI('Reference/World_Transportation'), { attribution: 'Roads &copy; Esri', zIndex: 5 });
+const placeNames = cachedTiles(local('labels', 'png'), ESRI('Reference/World_Boundaries_and_Places'), { attribution: 'Places &copy; Esri', zIndex: 6 });
+// DEMO / TUNE: satellite with roads and place names on top by default; the layers menu switches to the dark map.
+satellite.addTo(map); roads.addTo(map); placeNames.addTo(map);
 // Offline backdrop: a 0.05° grid and a few real towns for orientation (geography only, no military sites).
 const BACKDROP_TOWNS = [['Zaporizhzhia', 47.838, 35.139], ['Orikhiv', 47.567, 35.785], ['Dnipro', 48.464, 35.046],
   ['Kyiv', 50.450, 30.523], ['Lviv', 49.840, 24.030], ['Rzeszów', 50.041, 21.999]];  // DEMO
@@ -261,7 +275,7 @@ const layers = {
   personnel: L.layerGroup().addTo(map), drones: L.layerGroup().addTo(map), chain: L.layerGroup(),
   hospitals: L.layerGroup().addTo(map), evac: L.layerGroup().addTo(map),
 };
-L.control.layers(null, { 'Threat zones': layers.zones, 'Launch sites': layers.depots, 'Routes': layers.routes,
+L.control.layers({ 'Satellite': satellite, 'Dark map': dark }, { 'Roads and tracks': roads, 'Place names': placeNames, 'Threat zones': layers.zones, 'Launch sites': layers.depots, 'Routes': layers.routes,
   'Personnel': layers.personnel, 'Drones': layers.drones, 'Hospitals and aid stations': layers.hospitals,
   'Evacuations': layers.evac, 'Supply chain (rear)': layers.chain },
   { collapsed: true, position: 'topleft' }).addTo(map);
