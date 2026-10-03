@@ -158,6 +158,10 @@
   .hosp { width: 20px; height: 20px; background: #f778ba; border: 2px solid #fff; border-radius: 4px; color: #fff; font: 900 15px/16px system-ui; text-align: center; }
   .hosp.down { background: #555; }
   .hosp.temp { background: #f0b429; color: #000; }
+  /* A temporary site still setting up (resilience.py): dashed, with a countdown to opening */
+  .hosp.setup { background: #f0b42966; border-style: dashed; color: #000; animation: zonepulse 1.2s ease-in-out infinite; }
+  .setupeta { position: absolute; left: 24px; top: 1px; background: #f0b429; color: #000; padding: 1px 6px; border-radius: 6px;
+    font: 700 13px ui-monospace, monospace; white-space: nowrap; }
   /* Restock shipments on the way (stock_update orders), moving along their legs */
   .ship { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
   .ship .ic { font-size: 20px; line-height: 1; filter: drop-shadow(0 0 2px #000); }
@@ -262,6 +266,7 @@ let stockState = null;      // last stock_update: launch-site stock, facility be
 const evacs = {};           // evac_id -> {marker, line, person_id, eta, at}
 const chainActive = L.layerGroup();
 const suggestLayer = L.layerGroup();  // suggested temporary sites, redrawn on each supply_chain
+const setupClock = {};  // facility_id -> {left, at, speed}: real seconds until a temporary site opens
 let suggestions = [];  // active restock routes + destroyed-site markers, redrawn on each supply_chain
 let mode = 'connecting';
 
@@ -495,15 +500,17 @@ function loadSnapshot(data) {
 const hospMarkers = {};
 function drawHospital(f) {
   const role = (f.role || '').replace('ROLE_', 'Role ');
-  const down = f.status === 'DESTROYED';
+  const down = f.status === 'DESTROYED', setting = f.status === 'SETTING_UP';
   const temp = f.id.startsWith('tmp-') ? 'temp' : '';
-  const icon = L.divIcon({ className: '', html: `<div class="hosp ${down ? 'down' : ''} ${temp}">${down ? '✕' : '+'}</div>`, iconSize: [20, 20], iconAnchor: [10, 10] });
+  const icon = L.divIcon({ className: '', iconSize: [20, 20], iconAnchor: [10, 10],
+    html: `<div class="hosp ${down ? 'down' : ''} ${temp} ${setting ? 'setup' : ''}">${down ? '✕' : setting ? '⧗' : '+'}</div>`
+      + (setting ? `<span class="setupeta" data-setup="${f.id}">setting up</span>` : '') });
   let m = hospMarkers[f.id];
   if (!m || !layers.hospitals.hasLayer(m)) {
     m = hospMarkers[f.id] = L.marker([f.lat, f.lon], { icon, zIndexOffset: 400 }).addTo(layers.hospitals);
     m.bindTooltip(f.name.replace(/ \(.*\)/, ''), { permanent: f.role !== 'ROLE_3', direction: 'top', offset: [0, -10], className: 'lbl' });
   } else m.setIcon(icon);
-  m.bindPopup(`<b>${esc(f.name)}</b><br>${role} · beds ${f.beds_used || 0}/${f.beds}${down ? ' · <span class="sev-CRITICAL">destroyed</span>' : ''}<br>${esc(fmtItems(f.stock)) || 'no stock'}`);
+  m.bindPopup(`<b>${esc(f.name)}</b><br>${role} · beds ${f.beds_used || 0}/${f.beds}${down ? ' · <span class="sev-CRITICAL">destroyed</span>' : ''}${setting ? ' · setting up, not taking casualties yet' : ''}<br>${esc(fmtItems(f.stock)) || 'no stock'}`);
 }
 
 // One evacuation: pink road route + an ambulance marker that moves with evac_update.
@@ -562,9 +569,10 @@ function renderStock(changedIds = []) {
   for (const o of live) {
     if (o.status === 'IN_TRANSIT') orderClock[o.order_id] = { left: o.remaining_s_real, at: performance.now(), mins: o.remaining_min, speed: st.order_speed,
       total: o.minutes, legs: o.legs, items: o.items };
+    const what = [{ TEAM: 'Set-up team', CONVOY: 'Resupply convoy', BACKFILL: 'Refill' }[o.kind], fmtItems(o.items)].filter(Boolean).join(': ');
     h += o.status === 'LOST'
-      ? `<div class="ord lost">${esc(fmtItems(o.items))} to ${esc(nm(o.depot_id))}: lost at ${esc(nm(o.lost_at))}</div>`
-      : `<div class="ord">↳ ${esc(fmtItems(o.items))} to ${esc(nm(o.depot_id))} from ${esc(nm(o.source_id))} · <b data-order="${o.order_id}"></b></div>`;
+      ? `<div class="ord lost">${esc(what)} to ${esc(nm(o.depot_id))}: lost at ${esc(nm(o.lost_at))}</div>`
+      : `<div class="ord">↳ ${esc(what)} to ${esc(nm(o.depot_id))} from ${esc(nm(o.source_id))} · <b data-order="${o.order_id}"></b></div>`;
   }
   const beds = st.facilities.filter(f => f.beds && f.status !== 'DESTROYED' && S.facilities[f.id] && S.facilities[f.id].role !== 'ROLE_3');
   if (beds.length) h += '<div class="beds">' + beds.map(f => `${esc(nm(f.id).replace(/ \(.*\)/, ''))} <b>${f.beds_used}/${f.beds}</b> beds`).join(' · ') + '</div>';
@@ -675,12 +683,12 @@ const handlers = {
       return `<div class="r ${changed ? 'changed' : ''}"><span class="mins">${was}${hm(r.minutes)}</span><b>${esc(nm(r.depot_id))}</b><div class="via">${via}</div></div>`;
     }).join('');
     const sel = document.getElementById('siteSel'), keep = sel.value;
-    sel.innerHTML = Object.values(S.facilities).map(f => `<option value="${f.id}">${c.status[f.id] === 'DESTROYED' ? '✕ ' : ''}${esc(f.name)}</option>`).join('');
+    sel.innerHTML = Object.values(S.facilities).map(f => `<option value="${f.id}">${c.status[f.id] === 'DESTROYED' ? '✕ ' : c.status[f.id] === 'SETTING_UP' ? '⧗ ' : ''}${esc(f.name)}</option>`).join('');
     if (keep) sel.value = keep;
     updateSiteBtn();
     drawChainRoutes();
     renderSuggestions(c.suggestions || []);
-    if (c.changed && c.changed.status !== 'DEPLOYED') {
+    if (c.changed && !['DEPLOYED', 'SETTING_UP', 'READY'].includes(c.changed.status)) {
       const f = nm(c.changed.facility_id), hit = c.changed.status === 'DESTROYED';
       const lines = c.routes.filter(r => prev && prev[r.depot_id] && prev[r.depot_id].minutes !== r.minutes)
         .map(r => r.path ? `${esc(nm(r.depot_id))} now ${hm(r.minutes)} via ${esc(nm(r.source_id))}` : `${esc(nm(r.depot_id))} cut off`);
@@ -691,11 +699,14 @@ const handlers = {
       if (hit) showAlert(`<b>${esc(f)} destroyed.</b> Supply chain re-planned in ${c.changed.ms.toFixed(1)} ms.<div class="alt">${lines.join('<br>') || 'No launch site affected'}</div>`);
     }
   },
-  // HOOK: site_deployed. A temporary site replaced a destroyed one; a supply_chain update follows.
+  // HOOK: site_deployed. A temporary site's team was sent; it is SETTING_UP until site_ready.
   site_deployed(x) {
     const f = x.facility;
     S.facilities[f.id] = f;
+    if (x.setup) setupClock[f.id] = { left: x.setup.ready_in_s, at: performance.now(), speed: (stockState && stockState.order_speed) || 60 };
     if (f.kind === 'HOSPITAL') drawHospital(f);
+    if (x.cover) L.circle([x.cover.lat, x.cover.lon], { radius: x.cover.radius_m, color: '#3fb950', weight: 1, dashArray: '4 4', fillOpacity: .12, interactive: false })
+      .addTo(f.kind === 'HOSPITAL' ? layers.hospitals : layers.depots);
     L.circleMarker([f.lat, f.lon], { radius: 7, color: '#fff', weight: 1, fillColor: '#f0b429', fillOpacity: 1 })
       .bindTooltip(f.name, { direction: 'top', className: 'lbl' }).addTo(f.kind === 'HOSPITAL' ? layers.chain : layers.depots);
     const pos = id => S.facilities[id] || S.depots[id];
@@ -704,9 +715,22 @@ const handlers = {
       if (pts) L.polyline(pts, legStyle(l.mode, { color: '#f0b429', weight: 2, opacity: .7 }))
         .bindTooltip(`${l.mode} · ${Math.round(l.lead_time_min)} min`, { className: 'lbl' }).addTo(layers.chain);
     }
-    const lost = (S.facilities[x.replaces] || { name: x.replaces }).name;
-    log(`<b>${esc(f.name)}</b> set up in place of ${esc(lost)}. Supply chain and evacuations re-planned.`, 'deliv', x.ms);
-    showAlert(`<b>${esc(f.name)} deployed</b> in place of ${esc(lost)}.<div class="alt">Supply chain and evacuations re-planned in ${x.ms.toFixed(1)} ms.</div>`);
+    const lost = (S.facilities[x.replaces] || { name: x.replaces }).name, st = x.setup || {};
+    const ready = st.ready_min != null ? hm2(st.ready_min) : 'soon';
+    const how = [st.team_from_name && `team and kit by truck from ${st.team_from_name.replace(/ \(.*\)/, '')} (${hm2(st.team_min)})`,
+      st.setup_min && `${hm2(st.setup_min)} to set up`].filter(Boolean).join(', then ');
+    const modes = new Set([...((x.convoy || {}).legs || []), ...((x.backfill || {}).legs || [])].map(l => l.mode.toLowerCase()));
+    if (x.drone) modes.add('drone');
+    log(`<b>${esc(f.name)}</b> setting up ${esc(x.where || '')} in place of ${esc(lost)}. Ready in ${ready}: ${esc(how)}.`, 'deliv', x.ms);
+    showAlert(`<b>${esc(f.name)}: team sent</b>, ready in ${ready}.<div class="alt">${esc(x.where || '')}${x.cover ? ', ' + esc(x.cover.name.replace(/ \(.*\)/, '').toLowerCase()) : ''}.<br>${esc(how)}.<br>Resupply by ${esc([...modes].join(', '))}.</div>`);
+  },
+  // HOOK: site_ready. The temporary site finished setting up and is open.
+  site_ready(x) {
+    const f = S.facilities[x.facility.id] = Object.assign(S.facilities[x.facility.id] || {}, x.facility);
+    delete setupClock[f.id];
+    if (f.kind === 'HOSPITAL') drawHospital(f);
+    log(`<b>${esc(f.name)}</b> is open: taking casualties and stock.`, 'deliv', x.ms);
+    showAlert(`<b>${esc(f.name)} is open.</b><div class="alt">Supply chain and evacuations re-planned in ${x.ms.toFixed(1)} ms.</div>`);
   },
   // HOOK: stock_update. Launch-site and hospital stock as the graph holds it now, plus shipments.
   stock_update(x) {
@@ -781,14 +805,15 @@ function renderSuggestions(list) {
   box.innerHTML = list.map(s => s.id
     ? `<div class="s"><b>Suggested: ${esc(s.name)}</b><br>${esc(s.where)}, replacing ${esc(s.replaces_name)}
        <ul>${s.why.map(w => `<li>${esc(w)}</li>`).join('')}</ul>
-       <button class="deploy" onclick="deploySite('${esc(s.replaces)}')">Deploy</button> <span class="via">found in ${s.ms} ms</span></div>`
+       <button class="deploy" onclick="deploySite('${esc(s.replaces)}')">Send team</button> <span class="via">found in ${s.ms} ms</span></div>`
     : `<div class="note">${esc(s.note)}</div>`).join('');
   const pos = id => S.facilities[id] || S.depots[id];
   for (const s of list) if (s.id) {
     L.marker([s.lat, s.lon], { zIndexOffset: 500, icon: L.divIcon({ className: '', html: '<div class="sugg">+</div>', iconSize: [22, 22], iconAnchor: [11, 11] }) })
       .bindTooltip(`Suggested: ${s.name.replace(/ \(.*\)/, '')}`, { permanent: true, direction: 'top', offset: [0, -12], className: 'lbl' })
       .bindPopup(`<b>${esc(s.name)}</b><br>${esc(s.where)}<ul style="margin:4px 0 6px 18px;padding:0">${s.why.map(w => `<li>${esc(w)}</li>`).join('')}</ul>
-        <button class="deploy" onclick="deploySite('${esc(s.replaces)}')">Deploy</button>`).addTo(suggestLayer);
+        <button class="deploy" onclick="deploySite('${esc(s.replaces)}')">Send team</button>`).addTo(suggestLayer);
+    if (s.cover) L.circle([s.cover.lat, s.cover.lon], { radius: s.cover.radius_m, color: '#3fb950', weight: 1, dashArray: '4 4', fillOpacity: .15, interactive: false }).addTo(suggestLayer);
     for (const l of s.links) {
       const pts = legPoints(l.src_id, l.dst_id, l.mode, id => id === s.id ? s : pos(id));
       if (pts) L.polyline(pts, legStyle(l.mode, { color: '#f0b429', weight: 2, opacity: .8, interactive: false })).addTo(suggestLayer);
@@ -910,6 +935,11 @@ setInterval(() => {
     const o = orderClock[el.dataset.order]; if (!o) return;
     const left = Math.max(0, o.left - (now - o.at) / 1000);
     el.textContent = `${Math.ceil(left * o.speed / 60)} min`;
+  });
+  document.querySelectorAll('[data-setup]').forEach(el => {  // temporary sites: mission time until open
+    const c = setupClock[el.dataset.setup]; if (!c) return;
+    const left = Math.max(0, c.left - (now - c.at) / 1000) * c.speed / 60;
+    el.textContent = left > 0 ? `ready in ${hm2(left)}` : 'opening';
   });
   for (const [id, o] of Object.entries(orderClock)) placeShipment(id, o, Math.max(0, o.left - (now - o.at) / 1000));
 }, 250);

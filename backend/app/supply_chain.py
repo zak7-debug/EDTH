@@ -3,7 +3,7 @@
 How it fits the product:
 - The logistics graph holds every supplier, hub, hospital and launch site, joined by SUPPLIES edges
   with a lead time. `best_path()` searches it for the quickest way to get a restock order to a
-  launch site, passing only through sites that are still OPERATIONAL.
+  launch site, passing only through sites that are OPERATIONAL (not destroyed, not still setting up).
 - When a hub or hospital is destroyed (POST /sites), the dashboard recomputes every launch site's
   route at once, so the judges see "Launch Site North: was 60 min via the forward point, now
   2 h 30 min straight from the Dnipro hub". That is the "if infrastructure is hit, a new chain is
@@ -34,7 +34,8 @@ def best_path(target_id: str, items: dict[str, int], facilities: list[Facility],
     Returns {"source_id", "path": [ids, source first], "legs": [{src_id, dst_id, mode, minutes}], "minutes"}."""
     nodes: dict[str, object] = {d.id: d for d in depots}
     nodes.update({f.id: f for f in facilities})
-    up = lambda n: getattr(nodes.get(n), "status", "OPERATIONAL") != "DESTROYED"  # depots are always up
+    up = lambda n: getattr(nodes.get(n), "status", "OPERATIONAL") == "OPERATIONAL"  # depots are always up; a site
+    # still SETTING_UP (resilience.py) or DESTROYED passes nothing on
     holds = lambda n: n != target_id and all(nodes[n].stock.get(i, 0) >= q for i, q in items.items())
     incoming: dict[str, list[SupplyLink]] = {}
     for link in links:

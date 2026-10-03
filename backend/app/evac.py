@@ -216,8 +216,8 @@ class EvacTracker:
         return out
 
     def facility_added(self, facility_id: str, min_gain: float = 0.2) -> list[dict]:
-        """A temporary site was deployed: casualties still on the road whose trip it cuts by `min_gain`
-        or more switch to it. HOOK: resilience.post_deploy calls this after writing the site."""
+        """A temporary site opened: casualties still on the road whose trip it cuts by `min_gain`
+        or more switch to it. HOOK: resilience.finish_setup calls this once the site is OPERATIONAL."""
         out = []
         facilities = self.repo.list_facilities()
         f = next((x for x in facilities if x.id == facility_id), None)
@@ -235,7 +235,7 @@ class EvacTracker:
             msgs = self.start(person, t.evac.severity, origin=here, load_s=t.load_left_s)
             if msgs and msgs[0]["type"] == "evacuation":
                 msgs[0]["data"]["diverted_from"] = t.evac.facility_id
-                msgs[0]["data"]["note"] = (f"{f.name} deployed: diverting, {left / 60:.0f} min cut to "
+                msgs[0]["data"]["note"] = (f"{f.name} open: diverting, {left / 60:.0f} min cut to "
                                            f"{msgs[0]['data']['eta_s'] / 60:.0f} min. {msgs[0]['data']['note'] or ''}")
             out += msgs
         return out

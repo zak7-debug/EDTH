@@ -48,6 +48,7 @@ class RestockOrder:
     status: str = "IN_TRANSIT"  # then DELIVERED, or LOST (a site on its way was destroyed)
     lost_at: Optional[str] = None
     replaces: Optional[str] = None  # the lost order this one re-sends
+    kind: str = "RESTOCK"  # or TEAM / CONVOY / BACKFILL: a temporary site's set-up team and first resupply (resilience.py)
     _arrive_at: dict = field(default_factory=dict, repr=False)  # node id -> lead minutes to reach it
 
     def __post_init__(self):
@@ -112,7 +113,9 @@ class StockKeeper:
         if any(o.depot_id == depot_id and o.status == "IN_TRANSIT" for o in self.orders.values()):
             return []  # TUNE: one shipment at a time per launch site keeps the demo readable
         depots = self.repo.list_depots()
-        depot = next(d for d in depots if d.id == depot_id)
+        depot = next((d for d in depots if d.id == depot_id), None)
+        if depot is None:
+            return []  # a shipment to a hospital or temporary site: they don't reorder by themselves
         items = {i: REORDER_UP_TO - depot.stock.get(i, 0) for i in ITEMS if depot.stock.get(i, 0) < REORDER_POINT}
         if not items:
             return []
@@ -140,15 +143,33 @@ class StockKeeper:
         return [self.message("order_placed", f"{names[depot_id]} low: ordered {_fmt(items)} via {via}, "
                                              f"{order.minutes:.0f} min", depot_id=depot_id, order_id=order.order_id)]
 
+    def send(self, target_id: str, items: dict[str, int], path: dict, kind: str = "RESTOCK",
+             take_from_source: bool = True, note: Optional[str] = None) -> list[dict]:
+        """Send `items` down a chain already planned (supply_chain.best_path shape) to any site.
+        HOOK: resilience.start_supplies sends a temporary site's team and first convoy this way."""
+        names = _names(self.repo.list_facilities(), self.repo.list_depots())
+        order = RestockOrder(f"ord-{next(self._ids)}", target_id, path["source_id"], dict(items), path["path"],
+                             path["legs"], path["minutes"], self.clock(), kind=kind)
+        if take_from_source and items:
+            self.repo.adjust_stock(order.source_id, {i: -q for i, q in items.items()})
+        self.orders[order.order_id] = order
+        if note is None:
+            via = " → ".join(f"{names.get(n, n)}" for n in order.path)
+            note = f"{names.get(target_id, target_id)}: {_fmt(items)} sent via {via}, {order.minutes:.0f} min"
+        return [self.message("order_placed", note, depot_id=target_id, order_id=order.order_id)]
+
     def step(self) -> list[dict]:
         """Deliver every shipment whose lead time has passed. HOOK: the tick loop calls this."""
         now, out = self.clock(), []
         for o in list(self.orders.values()):
             if o.status == "IN_TRANSIT" and o.elapsed_min(now, self.speed) >= o.minutes:
                 o.status = "DELIVERED"
-                self.repo.adjust_stock(o.depot_id, o.items)
-                name = _names(self.repo.list_facilities(), self.repo.list_depots())[o.depot_id]
-                out.append(self.message("order_arrived", f"Restock arrived at {name}: {_fmt(o.items)}",
+                if o.items:
+                    self.repo.adjust_stock(o.depot_id, o.items)
+                name = _names(self.repo.list_facilities(), self.repo.list_depots()).get(o.depot_id, o.depot_id)
+                what = {"TEAM": "Set-up team arrived at", "CONVOY": "Resupply convoy arrived at",
+                        "BACKFILL": "Refill arrived at"}.get(o.kind, "Restock arrived at")
+                out.append(self.message("order_arrived", f"{what} {name}" + (f": {_fmt(o.items)}" if o.items else ""),
                                         depot_id=o.depot_id, order_id=o.order_id))
                 out += self.check(o.depot_id)  # still low on something else? order that too
         return out
@@ -163,6 +184,10 @@ class StockKeeper:
             if o.status == "IN_TRANSIT" and o.still_to_pass(facility_id, now, self.speed):
                 o.status, o.lost_at = "LOST", facility_id
                 names = _names(self.repo.list_facilities(), self.repo.list_depots())
+                if o.depot_id == facility_id:  # the destination itself was hit (a temporary site setting up)
+                    out.append(self.message("order_lost", f"Shipment to {names[o.depot_id]} stopped: site "
+                                                          "destroyed", depot_id=o.depot_id, order_id=o.order_id))
+                    continue
                 out.append(self.message("order_lost", f"Shipment to {names[o.depot_id]} lost at "
                                                       f"{names[facility_id]}: re-sending", depot_id=o.depot_id,
                                         order_id=o.order_id))
