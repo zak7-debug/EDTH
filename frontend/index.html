@@ -230,7 +230,7 @@
         <h2>Medic low on stock</h2>
         <div class="row"><select id="medicSel"></select></div>
         <div class="row"><select id="itemSel"></select><input id="qty" type="number" min="1" value="2" aria-label="quantity"></div>
-        <div class="row"><button id="lowBtn" style="flex:1">Report low stock</button></div>
+        <div class="row"><select id="urgSel" aria-label="how soon"><option value="CRITICAL">Critical</option><option value="URGENT" selected>Urgent</option><option value="NON_URGENT">Non-urgent</option></select><button id="lowBtn" style="flex:1">Request restock</button></div>
       </section>
       <section style="border-bottom:0">
         <h2>Drone shot down</h2>
@@ -358,8 +358,10 @@ const CORRIDOR = {  // "src>dst|MODE": waypoints from src to dst (reversed autom
   'dc-01>hos-03|TRUCK': [],
 };
 // Points of one leg, from src to dst. `at` finds a site's position (facility, depot or suggestion).
+let ROAD_LEGS = {};  // "src>dst" -> waypoints along roads for in-sector truck legs (supply_chain.road_legs)
 function legPoints(src, dst, mode, at) {
   const a = at(src), b = at(dst); if (!a || !b) return null;
+  if (mode === 'TRUCK' && ROAD_LEGS[`${src}>${dst}`]) return ROAD_LEGS[`${src}>${dst}`];
   let w = CORRIDOR[`${src}>${dst}|${mode}`];
   if (!w && CORRIDOR[`${dst}>${src}|${mode}`]) w = [...CORRIDOR[`${dst}>${src}|${mode}`]].reverse();
   return [[a.lat, a.lon], ...(w || []).map(t => TOWN[t]), [b.lat, b.lon]];
@@ -672,6 +674,7 @@ const handlers = {
   supply_chain(c) {
     const prev = chainRoutes;
     chainRoutes = Object.fromEntries(c.routes.map(r => [r.depot_id, r]));
+    ROAD_LEGS = c.road_legs || ROAD_LEGS;
     siteStatus = c.status;
     const nm = id => (S.facilities[id] || S.depots[id] || { name: id }).name;
     const hm = m => m >= 60 ? `${Math.floor(m / 60)} h ${String(Math.round(m % 60)).padStart(2, '0')} min` : `${Math.round(m)} min`;
@@ -758,7 +761,9 @@ const handlers = {
     const now = performance.now();
     let rate = ev.rate;
     if (ev.eta > u.eta_s && now > ev.at) rate = 0.5 * rate + 0.5 * ((ev.eta - u.eta_s) / ((now - ev.at) / 1000));
-    Object.assign(ev, { eta: u.eta_s, at: now, rate });
+    const phaseChanged = ev.phase !== u.phase;
+    Object.assign(ev, { eta: u.eta_s, at: now, rate, phase: u.phase });
+    if (phaseChanged) renderMissions();
     const p = S.personnel[u.person_id];
     if (p && u.phase === 'MOVING') { p.lat = u.lat; p.lon = u.lon; const m = markers.personnel[p.id]; if (m) m.setLatLng([u.lat, u.lon]); }
   },
@@ -777,7 +782,7 @@ const handlers = {
   queue(q) {
     const el = document.getElementById('queue');
     el.innerHTML = q.pending.length ? '<h2>Waiting for a drone</h2>' + q.pending.map(r =>
-      `<div class="q"><span>${r.position}. <span class="sev-${r.severity || 'LOW_STOCK'}">${r.severity || 'LOW STOCK'}</span> ${esc(name(r.subject_id))}</span><span class="t">${clock(new Date(r.ts * 1000))}</span></div>`).join('')
+      `<div class="q"><span>${r.position}. <span class="sev-${r.severity || 'LOW_STOCK'}">${r.severity || ((r.urgency || 'NON_URGENT').replace('_', '-') + ' RESTOCK')}</span> ${esc(name(r.subject_id))}</span><span class="t">${clock(new Date(r.ts * 1000))}</span></div>`).join('')
       : '';
   },
 };
@@ -852,7 +857,7 @@ function renderMissions() {
   for (const ev of Object.values(evacs)) {
     const p = S.personnel[ev.person_id];
     rows.push([etaNow(ev) + 1e6, `<div class="m evac"><span class="big" data-evac="${ev.id}">${fmtEta(etaNow(ev))}</span><div>
-      <div class="who" title="casualty evacuation by road">${esc(p ? p.callsign : ev.person_id)} <span class="to">→ by road to</span> ${esc(name(ev.to).replace(/ \(.*\)/, '').replace(/ (field hospital|aid station)$/, ''))}</div></div></div>`]);
+      <div class="who" title="casualty evacuation by road">${esc(p ? p.callsign : ev.person_id)} <span class="to">${ev.phase === 'WAITING_FOR_DRONE' ? 'waiting for drone, then' : ev.phase === 'TREATING' ? 'being treated, then' : '→'} by road to</span> ${esc(name(ev.to).replace(/ \(.*\)/, '').replace(/ (field hospital|aid station)$/, ''))}</div></div></div>`]);
   }
   rows.sort((a, b) => a[0] - b[0]);
   document.getElementById('missions').innerHTML = '<h2>In the air and on the road</h2>' +
@@ -987,7 +992,8 @@ document.querySelectorAll('[data-sev]').forEach(b => b.onclick = () =>
   post('/events', { type: 'CASUALTY', subject_id: document.getElementById('soldierSel').value, severity: b.dataset.sev }));
 document.getElementById('lowBtn').onclick = () => post('/events', { type: 'LOW_STOCK',
   subject_id: document.getElementById('medicSel').value,
-  items: { [document.getElementById('itemSel').value]: +document.getElementById('qty').value || 1 } });
+  items: { [document.getElementById('itemSel').value]: +document.getElementById('qty').value || 1 },
+  urgency: document.getElementById('urgSel').value });
 // Report threat: arm, then the next map click reports a threat there (TUNE: radius).
 document.getElementById('threatBtn').onclick = () => { document.getElementById('mapwrap').classList.add('placing'); toast('Click the map where the threat is'); };
 map.on('click', e => {

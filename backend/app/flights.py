@@ -79,6 +79,7 @@ class FlightTracker:
         self.sim_speed = sim_speed
         self.clock = clock
         self.stock = stock or StockKeeper(self.repo, clock=clock)  # HOOK: reloads come out of launch-site stock
+        engine.stock = self.stock  # medic restocks can order a launch site restocked (dispatch.py)
         self.flights: dict[str, _Flight] = {}  # drone_id -> flight
         # Each drone's standard loadout: its payload the first time it takes off. On landing it is
         # topped back up to this from its launch site's stock (stock.py), as far as the stock allows.

@@ -60,9 +60,9 @@ def delivered_msg(d: Dispatch, ts: float) -> dict:
 
 
 def queue_msg(pending: Iterable[Event]) -> dict:
-    """Pending requests, already in triage order (CRITICAL, WOUNDED, LOW_STOCK; oldest first)."""
+    """Pending requests, already in triage order (models.TRIAGE_PRIORITY / RESTOCK_PRIORITY; oldest first)."""
     return msg("queue", {"pending": [
-        {"request_id": e.event_id, "type": e.type, "severity": e.severity,
+        {"request_id": e.event_id, "type": e.type, "severity": e.severity, "urgency": e.urgency,
          "subject_id": e.subject_id, "items": e.items, "ts": e.ts, "position": i + 1}
         for i, e in enumerate(pending)
     ]})
@@ -120,7 +120,8 @@ def evacuation_msg(evac, facility_name: Optional[str], kit_eta_s: Optional[float
 
 
 def evac_update_msg(evac_id: str, person_id: str, lat: float, lon: float, phase: str, eta_s: float) -> dict:
-    """Where an evacuation is now. phase: LOADING (treated and loaded before moving) or MOVING."""
+    """Where an evacuation is now. phase: WAITING_FOR_DRONE (the casualty's supplies haven't landed),
+    TREATING (treated and loaded, TREAT_S after the drone lands) or MOVING (by road)."""
     return msg("evac_update", {"evac_id": evac_id, "person_id": person_id, "lat": lat, "lon": lon,
                                "phase": phase, "eta_s": round(eta_s, 1)})
 

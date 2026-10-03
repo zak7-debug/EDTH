@@ -18,8 +18,10 @@ How it fits the product:
   ADMITTED in the graph. If the destination is destroyed on the way, the casualty is diverted to
   the next-fastest one from where they are; if a new threat appears on their route, they detour.
 
-Ground routes are cross-country straight lines round threat zones: there is no road network in the
-graph yet. HOOK: swap `route_fn` for a road router to make the ETAs road-accurate.
+- The casualty only leaves once treated: the vehicle waits for the drone with their supplies to land
+  (WAITING_FOR_DRONE), then TREAT_S of treatment and loading (TREATING), then drives (MOVING).
+- Ground routes follow roads and field tracks round the threat zones (roads.py), and the ETA is the
+  driving time on them.
 
 Searchable tags: TUNE (numbers to adjust), HOOK (integration points), DEMO (demo behaviour).
 """
@@ -34,14 +36,16 @@ from .dispatch import DispatchEngine
 from .flights import SIM_SPEED, FlightTracker, _Flight
 from .messages import admitted_msg, dispatch_msg, evac_update_msg, evacuation_msg, no_dispatch_msg, queue_msg
 from .models import Dispatch, Evacuation, Event, Facility, NoFlyZone, Person
+from .roads import ROAD_KMH, net_for
 from .routing import Router, haversine_m
 from .stock import StockKeeper, _fmt
 
-# TUNE: ground casualty-evacuation speed, m/s. 11 m/s is about 40 km/h cross-country.
-CASEVAC_SPEED_MPS = 11.0
-# TUNE: mission seconds spent treating and loading at the point of injury before the vehicle moves.
-# The drone with point-of-injury supplies usually lands inside this window.
-LOAD_S = 300.0
+# TUNE: ground casualty-evacuation speed, m/s, for quick "could this possibly be faster" checks only.
+# Real drive times come from roads.py (road 50 km/h, field track 25, off-road 10).
+CASEVAC_SPEED_MPS = ROAD_KMH / 3.6
+# TUNE: mission seconds of treatment and loading after the drone with the casualty's supplies lands.
+TREAT_S = 600.0
+LOAD_S = TREAT_S  # older name, kept for callers
 # TUNE: which treatment levels can take which severity (NATO roles: 1 aid station, 2 surgery, 3 hospital).
 ACCEPTS = {"CRITICAL": ("ROLE_2", "ROLE_3"), "WOUNDED": ("ROLE_1", "ROLE_2", "ROLE_3")}
 # TUNE: what the destination uses to treat one casualty. Missing items are flown in ahead of them.
@@ -54,8 +58,9 @@ TREATMENT_KIT = {
 @dataclass
 class _Trip:
     evac: Evacuation
-    flight: _Flight  # reuses the drones' polyline mover; speed = CASEVAC_SPEED_MPS
+    flight: _Flight  # reuses the drones' polyline mover; speed = average speed of this road route
     load_left_s: float  # mission seconds of treating/loading left before it moves
+    treating: bool = False  # True once the drone has landed and treatment started (or nothing to wait for)
 
 
 class EvacTracker:
@@ -66,6 +71,7 @@ class EvacTracker:
         self.sim_speed = sim_speed
         self.clock = clock
         self.trips: dict[str, _Trip] = {}  # evac_id -> trip in progress
+        self.roads = net_for(self.repo.list_no_fly_zones())  # HOOK: rebuilt in reroute() when a threat appears
         self._ids = itertools.count(1)
 
     # ---------------------------------------------------------------------------------------
@@ -73,7 +79,7 @@ class EvacTracker:
     # ---------------------------------------------------------------------------------------
 
     def start(self, person: Person, severity: str, origin: Optional[tuple[float, float]] = None,
-              load_s: float = LOAD_S, avoid: tuple[str, ...] = ()) -> list[dict]:
+              load_s: float = TREAT_S, avoid: tuple[str, ...] = (), treating: bool = False) -> list[dict]:
         """Pick the fastest facility for this casualty and send them. Returns /ws messages: the
         `evacuation`, then the kit drone's `dispatch` / `no_dispatch` and `queue` if kit is short.
         HOOK: dev_server.process calls this after the casualty's own drone decision."""
@@ -81,7 +87,8 @@ class EvacTracker:
             return []  # already being evacuated / already in a bed
         origin = origin or (person.lat, person.lon)
         facilities = self.repo.list_facilities()
-        best = self._fastest(origin, severity, facilities, load_s, avoid)
+        wait_s = 0.0 if treating else self._drone_wait_s(person.id)
+        best = self._fastest(origin, severity, facilities, load_s + (wait_s or 0.0), avoid)
         if best is None:
             m = evacuation_msg(None, None, reason=f"no operational facility with a free bed can take a {severity} "
                                                   "casualty", note=f"No evacuation for {person.callsign}")
@@ -95,10 +102,14 @@ class EvacTracker:
         if shortfall:
             evac.resupply_request_id = f"{evac.evac_id}-kit"
         self.repo.start_evacuation(evac)  # graph: EVACUATED_TO edge + one bed taken
+        drive_s = eta - load_s - (wait_s or 0.0)
         self.trips[evac.evac_id] = _Trip(evac, _Flight(evac.evac_id, person.id, [tuple(p) for p in points],
-                                                       CASEVAC_SPEED_MPS, "EN_ROUTE"), load_s)
+                                                       dist / drive_s if drive_s > 0 else CASEVAC_SPEED_MPS,
+                                                       "EN_ROUTE"), load_s, treating=treating or wait_s is None)
         kit_msgs, kit_eta = self._send_kit(evac, f) if shortfall else ([], None)
-        note = f"{person.callsign} to {f.name}, {eta / 60:.0f} min"
+        note = f"{person.callsign} to {f.name} by road, {eta / 60:.0f} min"
+        if not treating and wait_s is not None:
+            note += f" (leaves {TREAT_S / 60:.0f} min after their drone lands)"
         if shortfall:
             note += f". Short of {_fmt(shortfall)} there: " + (
                 f"drone lands {kit_eta / 60:.0f} min ahead of them" if kit_eta is not None and kit_eta < eta
@@ -114,11 +125,21 @@ class EvacTracker:
                 continue
             if haversine_m(origin, (f.lat, f.lon)) / CASEVAC_SPEED_MPS + load_s >= (best[3] if best else float("inf")):
                 continue  # even a straight road couldn't beat the best so far: skip the routing
-            points, dist = self.engine.route_fn(origin, (f.lat, f.lon))
-            eta = load_s + dist / CASEVAC_SPEED_MPS
+            points, dist, drive_s = self.roads.route(origin, (f.lat, f.lon))
+            eta = load_s + drive_s
             if best is None or eta < best[3]:
                 best = (f, points, dist, eta)
         return best
+
+    def _drone_wait_s(self, person_id: str) -> Optional[float]:
+        """Mission seconds until the drone with this casualty's supplies lands: its flight's time left,
+        0 if it is queued for a drone (unknown yet), None if no drone is coming (treat straight away)."""
+        for fl in self.flights.flights.values():
+            if fl.phase == "EN_ROUTE" and fl.dispatch and fl.dispatch.recipient_id == person_id:
+                return (fl.total_m - fl.flown_m) / fl.speed_mps
+        if any(e.subject_id == person_id for e in self.engine.pending()):
+            return 0.0
+        return None
 
     def _shortfall(self, f: Facility, kit: dict[str, int]) -> dict[str, int]:
         """What `f` is missing for this kit, after setting aside kit for casualties already heading there."""
@@ -151,15 +172,23 @@ class EvacTracker:
         out = []
         for t in list(self.trips.values()):
             sim_s = dt_real * self.sim_speed
-            if t.load_left_s > 0:  # still being treated and loaded
+            wait = None if t.treating else self._drone_wait_s(t.evac.person_id)
+            if wait is not None:  # their drone hasn't landed: nobody moves an untreated casualty
+                lat, lon = t.flight.position()
+                drive = (t.flight.total_m - t.flight.flown_m) / t.flight.speed_mps
+                out.append(evac_update_msg(t.evac.evac_id, t.evac.person_id, lat, lon, "WAITING_FOR_DRONE",
+                                           wait + t.load_left_s + drive))
+                continue
+            t.treating = True
+            if t.load_left_s > 0:  # being treated and loaded
                 used = min(sim_s, t.load_left_s)
                 t.load_left_s -= used
                 sim_s -= used
-            t.flight.flown_m = min(t.flight.total_m, t.flight.flown_m + CASEVAC_SPEED_MPS * sim_s)
+            t.flight.flown_m = min(t.flight.total_m, t.flight.flown_m + t.flight.speed_mps * sim_s)
             lat, lon = t.flight.position()
-            eta = t.load_left_s + (t.flight.total_m - t.flight.flown_m) / CASEVAC_SPEED_MPS
+            eta = t.load_left_s + (t.flight.total_m - t.flight.flown_m) / t.flight.speed_mps
             out.append(evac_update_msg(t.evac.evac_id, t.evac.person_id, lat, lon,
-                                       "LOADING" if t.load_left_s > 0 else "MOVING", eta))
+                                       "TREATING" if t.load_left_s > 0 else "MOVING", eta))
             if t.load_left_s <= 0 and t.flight.flown_m >= t.flight.total_m:
                 out += self._admit(t)
         return out
@@ -184,13 +213,14 @@ class EvacTracker:
         """A new threat zone: casualties whose road ahead crosses it detour round it.
         HOOK: dev_server.add_threat calls this after engine.zones_changed()."""
         out, threat = [], Router([zone])
+        self.roads = net_for(self.repo.list_no_fly_zones())  # the zone is in the graph already: close its roads
         for t in list(self.trips.values()):
             ahead = t.flight.remaining()
             if len(ahead) < 2 or all(threat.clear(ahead[i], ahead[i + 1]) for i in range(len(ahead) - 1)):
                 continue
-            points, dist = self.engine.route_fn(ahead[0], ahead[-1])
-            t.flight = _Flight(t.evac.evac_id, t.evac.person_id, [tuple(p) for p in points], CASEVAC_SPEED_MPS, "EN_ROUTE")
-            eta = t.load_left_s + dist / CASEVAC_SPEED_MPS
+            points, dist, drive_s = self.roads.route(ahead[0], ahead[-1])
+            t.flight = _Flight(t.evac.evac_id, t.evac.person_id, [tuple(p) for p in points], dist / max(drive_s, 1), "EN_ROUTE")
+            eta = t.load_left_s + drive_s
             t.evac.route, t.evac.distance_m, t.evac.eta_s = points, round(dist, 1), round(eta, 1)
             name = next((f.name for f in self.repo.list_facilities() if f.id == t.evac.facility_id), t.evac.facility_id)
             out.append(evacuation_msg(t.evac, name, note=f"Evacuation detours round {zone.name}, {eta / 60:.0f} min to go"))
@@ -207,7 +237,7 @@ class EvacTracker:
             self.repo.finish_evacuation(t.evac.evac_id, "DIVERTED", self.clock())  # gives the bed back
             person = self.repo.get_person(t.evac.person_id)
             msgs = self.start(person, t.evac.severity, origin=t.flight.position(), load_s=t.load_left_s,
-                              avoid=(facility_id,))
+                              avoid=(facility_id,), treating=t.treating)
             if msgs and msgs[0]["type"] == "evacuation":
                 lost = next((f.name for f in self.repo.list_facilities() if f.id == facility_id), facility_id)
                 msgs[0]["data"]["diverted_from"] = facility_id
@@ -225,14 +255,14 @@ class EvacTracker:
             return out
         for t in list(self.trips.values()):
             here = t.flight.position()
-            left = t.load_left_s + (t.flight.total_m - t.flight.flown_m) / CASEVAC_SPEED_MPS
+            left = t.load_left_s + (t.flight.total_m - t.flight.flown_m) / t.flight.speed_mps
             best = self._fastest(here, t.evac.severity, [f], t.load_left_s)
             if best is None or best[3] > left * (1 - min_gain):
                 continue
             del self.trips[t.evac.evac_id]
             self.repo.finish_evacuation(t.evac.evac_id, "DIVERTED", self.clock())  # gives the old bed back
             person = self.repo.get_person(t.evac.person_id)
-            msgs = self.start(person, t.evac.severity, origin=here, load_s=t.load_left_s)
+            msgs = self.start(person, t.evac.severity, origin=here, load_s=t.load_left_s, treating=t.treating)
             if msgs and msgs[0]["type"] == "evacuation":
                 msgs[0]["data"]["diverted_from"] = t.evac.facility_id
                 msgs[0]["data"]["note"] = (f"{f.name} open: diverting, {left / 60:.0f} min cut to "
