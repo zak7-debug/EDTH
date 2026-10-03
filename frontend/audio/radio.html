@@ -26,7 +26,7 @@
 <body>
 <main>
   <h1>Radio test</h1>
-  <p class="hint">Keep the dashboard open in another tab: each report below triggers the same dispatches as the trigger panel. Lines are fictional (BADGER callsigns from the seed).</p>
+  <p class="hint">Keep the dashboard open in another tab: each report below triggers the same dispatches as the trigger panel. Medics report casualties and restocks, drone pilots report lost drones and threats, truck drivers report blocked roads. Lines are fictional (callsigns from the seed).</p>
 
   <section>
     <h2>Scripted clips</h2>
@@ -49,7 +49,9 @@
   <section class="out" id="out"><h2>Last report</h2><div class="hint">Nothing sent yet.</div></section>
 </main>
 <script>
-const CLIPS = ["badger3-critical-uk", "badger1-stock-uk", "badger1-wounded-en"];
+const CLIPS = ["badger3-critical-uk", "badger1-stock-uk", "badger1-wounded-en", "hawk2-threat-uk", "driver-road-uk"];
+// DEMO: drivers aren't in the graph, so their clip carries a (fictional) device position.
+const POSITION = { "driver-road-uk": "&lat=47.70&lon=35.60" };
 const out = document.getElementById("out");
 
 function show(r, wallMs) {
@@ -57,8 +59,12 @@ function show(r, wallMs) {
   const ev = r.events.map((e, i) => {
     const res = r.results[i] || {};
     const what = res.drone_id ? `drone ${res.drone_id}, ETA ${Math.round(res.eta_s)} s, decided in ${res.latency_ms} ms`
-                              : `no drone yet: ${res.reason || "queued"}`;
-    return `<div class="ev">${e.type} ${e.callsign} (${e.subject_id}) ${e.severity || ""} ${e.items ? JSON.stringify(e.items) : ""} → ${what}</div>`;
+               : e.type === "CASUALTY" ? (res.evacuation ? `evacuation to ${res.evacuation.facility_name || "hospital"}` : "status set")
+               : e.type === "THREAT" ? `zone added, ${(res.rerouted || []).length} rerouted`
+               : e.type === "DRONE_LOST" ? (res.ok ? "written off, delivery retried" : res.msg || "already lost")
+               : `no drone yet: ${res.reason || "queued"}`;
+    const who = e.subject_id || e.drone_id || (e.lat ? `${e.lat.toFixed(4)}, ${e.lon.toFixed(4)}` : "");
+    return `<div class="ev">${e.type} ${e.callsign} (${who}) ${e.severity || e.urgency || ""} ${e.items ? JSON.stringify(e.items) : ""} → ${what}</div>`;
   }).join("");
   out.innerHTML = `<h2>Last report</h2>
     <div><span class="k">Heard</span>${r.transcript} <code>[${r.language || "?"}]</code></div>
@@ -84,7 +90,7 @@ for (const name of CLIPS) {
       if (r.ok) { audio = await r.blob(); new Audio(URL.createObjectURL(audio)).play(); break; }
     }
     document.getElementById("cliphint").textContent = audio ? "" : `No audio file for ${name} yet: using its scripted transcript.`;
-    await post(`/voice?clip=${name}`, audio || new Blob([]));
+    await post(`/voice?clip=${name}${POSITION[name] || ""}`, audio || new Blob([]));
   };
   clipsDiv.appendChild(b);
 }
