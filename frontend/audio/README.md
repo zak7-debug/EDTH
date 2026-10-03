@@ -21,3 +21,13 @@ All lines are invented: they use the seed's fictional callsigns (BADGER 1 to 3).
 Open the dashboard at http://localhost:8000 and the test page at http://localhost:8000/audio/radio.html.
 Clip buttons and typed text work straight away. For real speech to text (clips with audio, or the
 microphone), first run `.venv/bin/pip install -r requirements-voice.txt` and `.venv/bin/python scripts/fetch_whisper.py`.
+
+Added for drone pilots and the ETA read-back (all fictional, seed callsigns):
+
+| Clip | Says | Becomes |
+| --- | --- | --- |
+| `badger1-eta-uk` | Badger 1 medic: how long until it arrives? | ETA_QUERY: the radio answers with the live ETA of the drone flying to med-1 |
+| `falcon2-threat-uk` | Falcon 2, pilot: enemy drone, 800 metres north | NO_FLY_ZONE placed from FALCON 2's position |
+| `hawk3-lost-uk` | Hawk 3, pilot: Hawk 3 shot down | DRONE_LOST drn-03 |
+| `driver-road-uk` | Driver: road blocked, crater, 200 metres east | ROAD_BLOCKED from the driver's device position |
+

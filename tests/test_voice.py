@@ -20,14 +20,15 @@ def test_ukrainian_casualty_and_low_blood():
     assert [(e["type"], e["subject_id"]) for e in r.events] == [("CASUALTY", "sol-14"), ("LOW_STOCK", "med-3")]
     assert r.events[0]["severity"] == "CRITICAL" and "items" not in r.events[0]  # bleeding is not a blood request
     assert r.events[1]["items"] == {"blood_oneg": 2}
+    assert r.events[1]["urgency"] == "CRITICAL"  # running out while treating a CRITICAL casualty
     assert not r.unparsed and r.parse_ms < 5
-    assert r.english == "BADGER 3-2 is CRITICAL. BADGER 3-DOC is running low: needs 2 x blood (O-neg)."
+    assert r.english == "BADGER 3-2 is CRITICAL. BADGER 3-DOC is running low: needs 2 x blood (O-neg) (critical)."
 
 
 def test_ukrainian_low_stock_quantities_before_and_after():
     r = parse_report(_clip("badger1-stock-uk"), _ids())
     assert r.events == [{"type": "LOW_STOCK", "subject_id": "med-1", "callsign": "BADGER 1-DOC",
-                         "items": {"tourniquet": 3, "hemostatic_gauze": 2}}]
+                         "items": {"tourniquet": 3, "hemostatic_gauze": 2}, "urgency": "URGENT"}]
 
 
 def test_english_wounded():
@@ -46,7 +47,7 @@ def test_unresolved_parts_are_reported_not_dispatched():
     assert [e["subject_id"] for e in r.events] == ["sol-09"]
     assert r.unparsed == ["BADGER 2-2: no severity heard (critical / wounded)"]
     assert parse_report("Потрібна кров.", _ids()).unparsed[0].startswith("supplies requested but no medic")
-    assert parse_report("Перевірка зв'язку.", _ids()).unparsed == ["no casualty or supply request heard"]
+    assert parse_report("Перевірка зв'язку.", _ids()).unparsed == ["no casualty, supply request, zone or lost drone heard"]
 
 
 def test_voice_endpoint_dispatches(monkeypatch):
@@ -122,3 +123,38 @@ def test_decode_audio_without_faster_whispers_decoder():
         w.writeframes(np.zeros(44100 * 2, dtype="<i2").tobytes())
     pcm = decode_audio(buf.getvalue())
     assert pcm.dtype == np.float32 and len(pcm) == 16000
+
+
+def test_restock_urgency_and_casualty_supplies_go_to_the_medic():
+    def urgency(text):
+        return [e["urgency"] for e in parse_report(text, _ids()).events if e["type"] == "LOW_STOCK"]
+    assert urgency("Борсук два, медик. Потрібен один турнікет, не терміново.") == ["NON_URGENT"]
+    assert urgency("Badger two medic. Need two chest seals urgently.") == ["URGENT"]
+    assert urgency("Борсук два, медик. Потрібна кров.") == ["NON_URGENT"]  # the default
+    r = parse_report("Борсук один-два важкий, потрібна кров дві одиниці.", _ids())
+    assert [(e["type"], e["subject_id"]) for e in r.events] == [("CASUALTY", "sol-02"), ("LOW_STOCK", "med-1")]
+    assert r.events[1]["urgency"] == "CRITICAL" and "items" not in r.events[0]
+
+
+def test_pilot_reports(monkeypatch):
+    """Drone pilots: a lost drone, and a threat placed from the drone; plus the medic's ETA question."""
+    monkeypatch.setenv("EDTH_REPO", "memory")
+    from backend.app import dev_server
+    dev_server.world = dev_server.World()
+    with TestClient(dev_server.app) as client:
+        lost = client.post("/voice?clip=hawk3-lost-uk", content=b"").json()
+        assert [(e["type"], e["drone_id"]) for e in lost["events"]] == [("DRONE_LOST", "drn-03")]
+        assert lost["readback"]["uk"].startswith("Прийнято, Яструб 3 списано")
+        zone = client.post("/voice?clip=falcon2-threat-uk", content=b"").json()
+        [ev] = zone["events"]
+        assert ev["type"] == "NO_FLY_ZONE" and ev["source"]["user_id"] == "FALCON 2"
+        assert zone["results"][0]["zone"]["properties"]["kind"] == "NO_FLY_ZONE"
+
+        asked = client.post("/voice?clip=badger1-eta-uk", content=b"").json()
+        assert asked["results"][0]["status"] == "NONE" and asked["readback"]["uk"] == "Відкритих запитів немає."
+        sent = client.post("/voice/text", json={"text": "Закінчуються турнікети, потрібно три.",
+                                                 "speaker": "Борсук один, медик"}).json()
+        drone = sent["results"][0]["drone_id"]
+        asked = client.post("/voice?clip=badger1-eta-uk", content=b"").json()
+        assert asked["results"][0]["drone_id"] == drone and asked["results"][0]["eta_s"] > 0
+        assert "прибуде приблизно через" in asked["readback"]["uk"]
