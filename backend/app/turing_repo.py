@@ -67,7 +67,7 @@ def lit(v) -> str:
 # TuringDB types each property name strictly (an Int64 property can't later be SET to a
 # Double), so numeric fields are always written with the same Python type.
 # TuringDB fixes a property's type on first write, so floats must always be written as floats.
-FLOAT_FIELDS = {"lat", "lon", "speed_mps", "range_m", "max_range_m", "last_update",
+FLOAT_FIELDS = {"lat", "lon", "speed_mps", "range_m", "max_range_m", "last_update", "lost_ts",
                 "eta_s", "distance_m", "ts", "latency_ms", "delivered_ts", "lead_time_min"}
 INT_FIELDS = {"capacity", "qty", "beds"}
 FACILITY_LABELS = {"SUPPLIER": "Supplier", "DISTRIBUTION_CENTRE": "DistributionCentre", "HOSPITAL": "Hospital"}
@@ -189,7 +189,7 @@ class TuringRepo:
                 parts += self._stocks_parts(dep.id, dep.stock)
             for f in seed.facilities:
                 fprops = {'id': f.id, 'kind': f.kind, 'name': f.name, 'lat': f.lat, 'lon': f.lon,
-                          'role': f.role, 'beds': f.beds}
+                          'role': f.role, 'beds': f.beds, 'status': f.status}
                 parts.append(f"({var(f.id)}:{FACILITY_LABELS[f.kind]} {props(fprops)})")
                 parts += self._stocks_parts(f.id, f.stock)
             for link in seed.supply_links:
@@ -314,9 +314,12 @@ class TuringRepo:
 
     def _facility(self, r: dict, stock: dict[str, int]) -> Facility:
         return Facility(r["id"], r["kind"], r["name"], float(r["lat"]), float(r["lon"]), stock,
-                        role=r["role"] or "", beds=int(r["beds"] or 0))
+                        role=r["role"] or "", beds=int(r["beds"] or 0), status=r["status"] if isinstance(r["status"], str) and r["status"] else "OPERATIONAL")
 
-    _FACILITY_RETURN = "f.id, f.kind, f.name, f.lat, f.lon, f.role, f.beds"
+    _FACILITY_RETURN = "f.id, f.kind, f.name, f.lat, f.lon, f.role, f.beds, f.status"
+
+    def set_facility_status(self, facility_id, status):
+        self._write(self.g_logistics, [f"MATCH (f) WHERE f.id = {lit(facility_id)} SET f.status = {lit(status)}"])
 
     def list_facilities(self):
         stock = self._stock_by_node()
@@ -338,9 +341,11 @@ class TuringRepo:
                         f"WHERE d.id = {lit(depot_id)} "
                         f"RETURN {self._FACILITY_RETURN}, l.lead_time_min, l.mode, s.id, k.qty")
         found: dict[str, tuple[Facility, SupplyLink]] = {}
-        keys = ("id", "kind", "name", "lat", "lon", "role", "beds")
+        keys = ("id", "kind", "name", "lat", "lon", "role", "beds", "status")
         for (*fvals, lead, mode, item, qty) in df.itertuples(index=False, name=None):
             r = dict(zip(keys, fvals))
+            if not isinstance(r["kind"], str) or not r["kind"]:
+                continue  # another launch site relaying stock (DRONE link): not an upstream facility
             if r["id"] not in found:
                 found[r["id"]] = (self._facility(r, {}), SupplyLink(r["id"], depot_id, float(lead), mode))
             found[r["id"]][0].stock[item] = int(qty)
@@ -397,6 +402,16 @@ class TuringRepo:
 
     def release_drone(self, drone_id):
         self.update_drone(drone_id, status="IDLE", claimed_by=None)
+
+    def lose_drone(self, drone_id, request_id=None, ts=None):
+        with self._lock:
+            drone = self.get_drone(drone_id)
+            qs = [f"MATCH (d:Drone) WHERE d.id = {lit(drone_id)} SET d.status = 'LOST', d.claimed_by = ''",
+                  *self._payload_queries(drone_id, {k: 0 for k in drone.payload}, drone.payload)]
+            if request_id:
+                qs.append(f"MATCH (d:Drone)-[x:DISPATCHED_TO]->(r:Recipient) WHERE x.request_id = {lit(request_id)} "
+                          f"SET {sets('x', {'status': 'LOST', 'lost_ts': ts or time.time()})}")
+            self._write(self.g_logistics, qs)
 
     # Edges can't cross graphs, so the drone points at a Recipient stand-in node holding the person's id.
     def create_dispatch(self, dispatch):

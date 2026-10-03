@@ -30,9 +30,10 @@ from .dispatch import DispatchEngine
 from .flights import FlightTracker
 from . import querylog
 from .messages import (dispatch_msg, event_msg, no_dispatch_msg, query_log_msg, queue_msg, snapshot,
-                       zone_added_msg)
+                       drone_lost_msg, supply_chain_msg, zone_added_msg)
 from .models import Dispatch, Event, NoFlyZone
 from .repo import get_repo
+from .supply_chain import chain_status
 
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
 TICK_S = 0.5  # TUNE: how often drones move on the map (contract says about 2 updates per second)
@@ -49,10 +50,14 @@ DEMO_SCRIPT = [
     (10.0, {"type": "LOW_STOCK", "subject_id": "med-2", "items": {"blood_oneg": 2}}),
     (10.0, {"type": "CASUALTY", "subject_id": "sol-15", "severity": "WOUNDED"}),
     (16.0, {"type": "CASUALTY", "subject_id": "sol-16", "severity": "CRITICAL"}),
+    (19.0, {"type": "DRONE_LOST", "drone_id": "drn-01"}),  # DEMO: HAWK 1 shot down on its way to BADGER 2-4
     (22.0, {"type": "CASUALTY", "subject_id": "sol-05", "severity": "CRITICAL"}),
     (23.0, {"type": "CASUALTY", "subject_id": "sol-12", "severity": "WOUNDED"}),
+    (27.0, {"type": "SITE", "facility_id": "dc-02", "status": "DESTROYED"}),  # DEMO: forward hub hit
 ]
 
+
+LOSS_THREAT_RADIUS_M = 600  # TUNE: size of the zone drawn where a drone was shot down
 
 # DEMO: the threat reported mid-scenario (fictional), between Launch Site West and BADGER 1.
 DEMO_THREAT = {"name": "New air-defence threat", "lat": 47.6498, "lon": 35.5888, "radius_m": 900}
@@ -129,6 +134,60 @@ async def add_threat(body: dict) -> dict:
     return {"zone": zone.to_dict(), "rerouted": [m["data"]["drone_id"] for m in reroutes], "ms": round(ms, 1)}
 
 
+async def lose_drone(drone_id: str) -> dict:
+    """A drone is shot down: write it off, mark the spot as a threat, re-send the casualty's supplies."""
+    drone = world.repo.get_drone(drone_id)
+    if drone is None:
+        raise HTTPException(404, f"unknown drone {drone_id!r}")
+    if drone.status == "LOST":
+        return {"ok": False, "msg": "already lost"}
+    where = world.tracker.lose(drone_id) or {"lat": drone.lat, "lon": drone.lon, "phase": drone.status,
+                                             "request_id": None, "recipient_id": None}
+    world.repo.update_drone(drone_id, lat=where["lat"], lon=where["lon"])
+    lost_items = {k: v for k, v in drone.payload.items() if v}
+    await broadcast(drone_lost_msg(drone_id, where["lat"], where["lon"], where["phase"], where["request_id"],
+                                   where["recipient_id"], lost_items))
+    # TUNE: the loss spot becomes a threat zone so nothing else flies into the same fire.
+    await add_threat({"name": f"Suspected shoot-down ({drone.callsign})", "lat": where["lat"],
+                      "lon": where["lon"], "radius_m": LOSS_THREAT_RADIUS_M})
+    retry_request = where["request_id"] if where["phase"] == "EN_ROUTE" else None  # returning drones were empty-handed
+    t = time.perf_counter()
+    result = world.engine.drone_lost(drone_id, retry_request)
+    if result is not None:
+        await broadcast(dispatch_msg(result) if isinstance(result, Dispatch) else no_dispatch_msg(result))
+        world.engine.record(result)
+        if isinstance(result, Dispatch):
+            world.tracker.start(result)
+    await broadcast(queue_msg(world.engine.pending()))
+    return {"ok": True, "retry": result.to_dict() if result else None, "ms": round((time.perf_counter() - t) * 1000, 1)}
+
+
+async def set_site(facility_id: str, status: str) -> dict:
+    """A hub, hospital or supplier is destroyed (or back in service): store it, re-plan every chain."""
+    if status not in ("DESTROYED", "OPERATIONAL"):
+        raise HTTPException(422, "status must be DESTROYED or OPERATIONAL")
+    if facility_id not in {f.id for f in world.repo.list_facilities()}:
+        raise HTTPException(404, f"unknown facility {facility_id!r}")
+    t = time.perf_counter()
+    world.repo.set_facility_status(facility_id, status)
+    chain = chain_status(world.repo)
+    ms = (time.perf_counter() - t) * 1000
+    await broadcast(supply_chain_msg(chain, {"facility_id": facility_id, "status": status, "ms": round(ms, 1)}))
+    return {**chain, "ms": round(ms, 1)}
+
+
+@app.post("/sites")
+async def post_site(body: dict):
+    """HOOK: mark a supply-chain site destroyed or restored. Body: {"facility_id", "status"}."""
+    return await set_site(body["facility_id"], body.get("status", "DESTROYED"))
+
+
+@app.post("/losses")
+async def post_loss(body: dict):
+    """HOOK: report a drone lost (dashboard button, scenario, or real telemetry). Body: {"drone_id"}."""
+    return await lose_drone(body["drone_id"])
+
+
 @app.post("/threats")
 async def post_threat(body: dict):
     """HOOK: report a new threat zone (dashboard button, scenario, or real intel feed)."""
@@ -136,6 +195,10 @@ async def post_threat(body: dict):
 
 
 async def process(raw: dict, received_perf: float) -> dict:
+    if raw.get("type") == "SITE":  # DEMO: scripted strikes on the supply chain
+        return await set_site(raw["facility_id"], raw.get("status", "DESTROYED"))
+    if raw.get("type") == "DRONE_LOST":  # DEMO: scripted losses share the event timeline
+        return await lose_drone(raw["drone_id"])
     if raw.get("type") == "THREAT":  # DEMO: scripted threats share the event timeline
         return await add_threat({k: v for k, v in raw.items() if k != "type"} or dict(DEMO_THREAT))
     event = _complete(raw)
@@ -177,6 +240,7 @@ async def reset():
         _scenario.cancel()
     world = World()
     await broadcast(snapshot(world.repo))
+    await broadcast(supply_chain_msg(chain_status(world.repo)))
     return {"ok": True}
 
 
@@ -204,6 +268,7 @@ async def ws(socket: WebSocket):
     clients.add(socket)
     await socket.send_json(snapshot(world.repo))
     await socket.send_json(queue_msg(world.engine.pending()))
+    await socket.send_json(supply_chain_msg(chain_status(world.repo)))
     try:
         while True:
             await socket.receive_text()  # clients don't send anything; this just waits for close

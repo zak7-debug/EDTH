@@ -19,7 +19,7 @@ ITEMS = ("tourniquet", "blood_oneg", "chest_seal", "hemostatic_gauze", "morphine
 
 PersonKind = Literal["SOLDIER", "MEDIC"]
 PersonStatus = Literal["OK", "WOUNDED", "CRITICAL"]
-DroneStatus = Literal["IDLE", "EN_ROUTE", "RETURNING", "CHARGING"]
+DroneStatus = Literal["IDLE", "EN_ROUTE", "RETURNING", "CHARGING", "LOST"]
 EventType = Literal["CASUALTY", "LOW_STOCK"]
 Severity = Literal["CRITICAL", "WOUNDED"]
 
@@ -91,6 +91,7 @@ class Facility:
     stock: dict[str, int] = field(default_factory=dict)
     role: str = ""  # hospitals only
     beds: int = 0  # hospitals only
+    status: str = "OPERATIONAL"  # or "DESTROYED": the supply chain routes round it (supply_chain.py)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -186,7 +187,7 @@ class Dispatch:
     route: list[tuple[float, float]]  # [(lat, lon), ...] from drone to recipient
     latency_ms: float  # event received -> dispatch decided
     ts: float
-    status: Literal["EN_ROUTE", "DELIVERED"] = "EN_ROUTE"
+    status: Literal["EN_ROUTE", "DELIVERED", "LOST"] = "EN_ROUTE"
 
     def to_dict(self) -> dict:
         d = asdict(self)

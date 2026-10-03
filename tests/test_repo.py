@@ -94,11 +94,11 @@ def test_supply_chain(repo):
     assert len(facilities) == 7
     assert facilities["hos-02"].role == "ROLE_3" and facilities["hos-02"].beds == 150
     assert facilities["sup-02"].stock == {"blood_oneg": 400}
-    assert len(repo.list_supply_links()) == 10
+    assert len(repo.list_supply_links()) == 14
     depots = {d.id: d for d in repo.list_depots()}
     assert depots["dep-02"].stock["blood_oneg"] == 1
 
-    # Launch Site West is restocked only by the Zaporizhzhia forward point.
+    # Launch Site West's only upstream facility is the Zaporizhzhia forward point (dep-03 relays by drone).
     sources = repo.find_resupply_sources("dep-02", {"blood_oneg": 4})
     assert [(f.id, link.lead_time_min) for f, link in sources] == [("dc-02", 50.0)]
     # Launch Site Rear: the Role 2 hospital (15 min) has blood but no chest seals, so only dc-02 qualifies.

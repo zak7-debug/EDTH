@@ -33,11 +33,13 @@ One socket. Every message is `{"type": ..., "data": ...}`.
 | `query_log` | after each decision and its writes | `request_id`, `phase` (`decide` = inside the timed decision, `record` = graph writes after the broadcast), `queries`: list of `{graph, kind (read/write), cypher, ms, rows}`, `total_ms`. Empty `queries` on the in-memory repo |
 | `zone_added` | a threat is reported (`POST /threats`) | the zone: `id`, `name`, `polygon` |
 | `reroute` | a drone in the air changes course round a new zone | `drone_id`, `request_id`, `phase` (`EN_ROUTE`/`RETURNING`), `route` (from its current position), `distance_m`, `eta_s`, `added_m`, `zone` (name) |
+| `drone_lost` | a drone is reported shot down (`POST /losses`) | `drone_id`, `lat`, `lon`, `phase` (what it was doing), `request_id` and `recipient_id` of the lost delivery (or null), `items_lost`. A `zone_added` for the loss spot and the retry's `dispatch` / `no_dispatch` (request_id + `-r1`) follow |
+| `supply_chain` | on connect, and when a site is destroyed or restored (`POST /sites`) | `order` (the restock order), `status` (`{facility_id: OPERATIONAL/DESTROYED}`), `routes`: per launch site `{depot_id, source_id, path (ids, source first), legs [{src_id, dst_id, mode, minutes}], minutes}` or `path: null` when cut off, `changed` (`{facility_id, status, ms}` or null) |
 | `queue` | queue changes | `pending`: list of `{request_id, type, severity, subject_id, items, ts, position}` in triage order |
 
 `latency_ms` is measured from the moment `POST /events` receives the event to the moment the dispatch decision is made, before any graph writes.
 
-REST besides events: `POST /threats` (`{name, lat, lon, radius_m}` or `{name, polygon}`) reports a new threat zone; `GET /state` returns the `snapshot` data; `POST /scenario/{name}` triggers a scripted demo scenario; `GET /health`.
+REST besides events: `POST /sites` (`{facility_id, status}`) destroys or restores a supply-chain site; `POST /losses` (`{drone_id}`) reports a drone shot down; `POST /threats` (`{name, lat, lon, radius_m}` or `{name, polygon}`) reports a new threat zone; `GET /state` returns the `snapshot` data; `POST /scenario/{name}` triggers a scripted demo scenario; `GET /health`.
 
 Example `dispatch`:
 

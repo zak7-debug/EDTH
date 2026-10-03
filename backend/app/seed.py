@@ -125,6 +125,11 @@ SUPPLY_LINKS = [
     SupplyLink("dc-02", "dep-02", 50, "TRUCK"),
     SupplyLink("dc-02", "dep-03", 40, "TRUCK"),
     SupplyLink("hos-01", "dep-03", 15, "TRUCK"),
+    # DEMO: backup links, so knocking out one hub leaves a slower working chain to find.
+    SupplyLink("dc-01", "dep-01", 150, "TRUCK"),  # long road straight from the Dnipro hub
+    SupplyLink("dc-02", "hos-01", 30, "TRUCK"),
+    SupplyLink("dep-03", "dep-01", 25, "DRONE"),  # launch sites relay stock to each other by cargo drone
+    SupplyLink("dep-03", "dep-02", 20, "DRONE"),
 ]
 
 # (id, callsign, depot, speed m/s, range left m, max range m, capacity, status, payload)

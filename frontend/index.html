@@ -52,7 +52,7 @@
   main { display: grid; grid-template-columns: 1fr 420px; min-height: 0; }
   #mapwrap { position: relative; min-height: 0; }
   #map { position: absolute; inset: 0; background: #0b0f14; }
-  aside { border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
+  aside { border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: var(--panel); overflow-y: auto; }
   section { padding: 12px 14px; border-bottom: 1px solid var(--line); }
   section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 0 0 8px; }
   .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
@@ -60,7 +60,7 @@
     padding: 7px 8px; font: inherit; min-width: 0; }
   select { flex: 1; }
   input[type=number] { width: 64px; }
-  #log { flex: 1; overflow-y: auto; padding: 0 14px 12px; min-height: 0; }
+  #log { flex: 1; overflow-y: auto; padding: 0 14px 12px; min-height: 220px; }
   #log .e { padding: 6px 0; border-bottom: 1px solid #21262d; font-size: 15px; display: grid;
     grid-template-columns: 70px 1fr auto; gap: 8px; }
   #log .t { color: var(--muted); font: 13px ui-monospace, monospace; padding-top: 2px; }
@@ -74,6 +74,13 @@
   #queries .cy.open { max-height: none; }
   #queries .cy .m { float: right; color: var(--accent); font-weight: 700; margin-left: 8px; }
   #queries .cy .w { color: var(--wounded); }
+  /* Resupply routes (supply_chain messages) */
+  #chain .r { padding: 5px 0; border-bottom: 1px solid #21262d; font-size: 14px; }
+  #chain .r:last-of-type { border-bottom: 0; }
+  #chain .r b { font-size: 15px; } #chain .mins { float: right; font: 700 15px ui-monospace, monospace; color: var(--ok); }
+  #chain .r.changed .mins { color: var(--wounded); } #chain .r.cut .mins { color: var(--critical); }
+  #chain .was { color: var(--muted); text-decoration: line-through; font-weight: 400; margin-right: 6px; }
+  #chain .via { color: var(--muted); font-size: 13px; }
   #queue .q { display: flex; justify-content: space-between; padding: 4px 0; font-size: 15px; }
   .empty { color: var(--muted); font-size: 14px; }
   .sev-CRITICAL { color: var(--critical); font-weight: 700; } .sev-WOUNDED { color: var(--wounded); font-weight: 700; }
@@ -139,8 +146,15 @@
         <button class="crit" data-sev="CRITICAL">Critical</button><button class="wnd" data-sev="WOUNDED">Wounded</button></div>
       <div class="row"><select id="medicSel"></select><select id="itemSel"></select>
         <input id="qty" type="number" min="1" value="2"><button id="lowBtn">Low stock</button></div>
+      <div class="row"><select id="droneSel"></select><button class="crit" id="lostBtn">Shot down</button></div>
     </section>
     <section id="queue"><h2>Waiting for a drone</h2><div class="empty">Nobody waiting</div></section>
+    <section>
+      <h2>Resupply routes to launch sites</h2>
+      <div id="chain"><div class="empty">Waiting for the supply chain</div></div>
+      <div class="row" style="margin-top:8px"><select id="siteSel"></select><button class="crit" id="siteBtn">Destroy</button></div>
+      <div class="row"><button id="chainBtn">Show supply chain on map</button></div>
+    </section>
     <section id="queries"><h2>Graph queries (last request)</h2><div class="empty">None yet</div></section>
     <section style="border-bottom:0;padding-bottom:4px"><h2>Event log</h2></section>
     <div id="log"></div>
@@ -154,7 +168,7 @@
 const API = location.protocol === 'file:' ? 'http://localhost:8000' : location.origin;
 const WS_URL = API.replace(/^http/, 'ws') + '/ws';
 const STATUS_COLOUR = { OK: '#3fb950', WOUNDED: '#f0b429', CRITICAL: '#f85149' };  // TUNE: soldier colours
-const DRONE_COLOUR = { IDLE: '#8b949e', EN_ROUTE: '#39d0d8', RETURNING: '#d2a8ff', CHARGING: '#f0b429' };  // TUNE
+const DRONE_COLOUR = { IDLE: '#8b949e', EN_ROUTE: '#39d0d8', RETURNING: '#d2a8ff', CHARGING: '#f0b429', LOST: '#f85149' };  // TUNE
 const LATENCY_WINDOW = 20;   // TUNE: how many decisions the rolling average covers
 const BANNER_MS = 12000;     // TUNE: how long a no_dispatch banner stays up
 const LOG_MAX = 200;
@@ -167,6 +181,8 @@ const markers = { personnel: {}, drones: {}, depots: {} };
 const routes = {};          // request_id -> polyline
 const eta = {};             // drone_id -> {eta, at, rate}  (seconds, performance.now(), mission-s per real-s)
 const latencies = [];
+let chainRoutes = null, siteStatus = {};
+const chainActive = L.layerGroup();  // active restock routes + destroyed-site markers, redrawn on each supply_chain
 let mode = 'connecting';
 
 // ---------------------------------------------------------------------------------------------
@@ -345,6 +361,43 @@ const handlers = {
     eta[r.drone_id] = { eta: r.eta_s, at: performance.now(), rate: (eta[r.drone_id] || {}).rate || 1, req: r.request_id, status: r.phase };
     log(`<b>${esc(name(r.drone_id))}</b> rerouted round ${esc(r.zone)}: ${r.added_m >= 0 ? '+' : ''}${(r.added_m / 1000).toFixed(1)} km, ETA now ${fmtEta(r.eta_s)}`, 'reroute');
   },
+  // A drone was shot down: grey it out, drop its route, and say what happens next.
+  drone_lost(x) {
+    const d = S.drones[x.drone_id];
+    if (d) { Object.assign(d, { status: 'LOST', lat: x.lat, lon: x.lon, payload: {} }); delete eta[x.drone_id]; drawDrone(d); }
+    if (x.request_id) clearRoute(x.request_id);
+    const who = x.recipient_id ? ` on its way to ${esc(name(x.recipient_id))}` : '';
+    const next = x.recipient_id ? ' Re-sending the supplies.' : '';
+    log(`<b>${esc(name(x.drone_id))}</b> shot down${who}. Lost: ${esc(fmtItems(x.items_lost)) || 'nothing'}.${next}`, 'nod');
+    showAlert(`<b>${esc(name(x.drone_id))} shot down</b>${who}.${next}`);
+  },
+  // HOOK: supply_chain. Each launch site's restock route; recomputed when a site is destroyed.
+  supply_chain(c) {
+    const prev = chainRoutes;
+    chainRoutes = Object.fromEntries(c.routes.map(r => [r.depot_id, r]));
+    siteStatus = c.status;
+    const nm = id => (S.facilities[id] || S.depots[id] || { name: id }).name;
+    const hm = m => m >= 60 ? `${Math.floor(m / 60)} h ${String(Math.round(m % 60)).padStart(2, '0')} min` : `${Math.round(m)} min`;
+    document.getElementById('chain').innerHTML = c.routes.map(r => {
+      const old = prev && prev[r.depot_id], changed = c.changed && old && (old.minutes !== r.minutes);
+      if (!r.path) return `<div class="r cut"><span class="mins">cut off</span><b>${esc(nm(r.depot_id))}</b><div class="via">No working supply chain</div></div>`;
+      const via = r.legs.map(l => `${esc(nm(l.src_id))} <span style="color:var(--accent)">${l.mode}</span>`).join(' → ');
+      const was = changed && old.minutes != null ? `<span class="was">${hm(old.minutes)}</span>` : '';
+      return `<div class="r ${changed ? 'changed' : ''}"><span class="mins">${was}${hm(r.minutes)}</span><b>${esc(nm(r.depot_id))}</b><div class="via">${via}</div></div>`;
+    }).join('');
+    const sel = document.getElementById('siteSel'), keep = sel.value;
+    sel.innerHTML = Object.values(S.facilities).map(f => `<option value="${f.id}">${c.status[f.id] === 'DESTROYED' ? '✕ ' : ''}${esc(f.name)}</option>`).join('');
+    if (keep) sel.value = keep;
+    updateSiteBtn();
+    drawChainRoutes();
+    if (c.changed) {
+      const f = nm(c.changed.facility_id), hit = c.changed.status === 'DESTROYED';
+      const lines = c.routes.filter(r => prev && prev[r.depot_id] && prev[r.depot_id].minutes !== r.minutes)
+        .map(r => r.path ? `${esc(nm(r.depot_id))} now ${hm(r.minutes)} via ${esc(nm(r.source_id))}` : `${esc(nm(r.depot_id))} cut off`);
+      log(`<b>${esc(f)}</b> ${hit ? 'destroyed' : 'back in service'}. ${lines.join('; ') || 'No launch site affected'}.`, hit ? 'nod' : 'deliv', c.changed.ms);
+      if (hit) showAlert(`<b>${esc(f)} destroyed.</b> Supply chain re-planned in ${c.changed.ms.toFixed(1)} ms.<div class="alt">${lines.join('<br>') || 'No launch site affected'}</div>`);
+    }
+  },
   queue(q) {
     const el = document.getElementById('queue');
     el.innerHTML = '<h2>Waiting for a drone</h2>' + (q.pending.length ? q.pending.map(r =>
@@ -352,6 +405,25 @@ const handlers = {
       : '<div class="empty">Nobody waiting</div>');
   },
 };
+
+function drawChainRoutes() {
+  chainActive.clearLayers();
+  const pos = id => S.facilities[id] || S.depots[id];
+  for (const r of Object.values(chainRoutes || {})) for (const l of r.legs || []) {
+    const a = pos(l.src_id), b = pos(l.dst_id);
+    if (a && b) L.polyline([[a.lat, a.lon], [b.lat, b.lon]], { color: '#3fb950', weight: 4, opacity: .9 }).addTo(chainActive);
+  }
+  for (const [id, st] of Object.entries(siteStatus)) if (st === 'DESTROYED' && S.facilities[id]) {
+    const f = S.facilities[id];
+    L.marker([f.lat, f.lon], { icon: L.divIcon({ className: '', iconSize: [26, 26], iconAnchor: [13, 13],
+      html: '<div style="color:#f85149;font:900 26px/26px system-ui;text-shadow:0 0 3px #000">✕</div>' }) })
+      .bindTooltip(`${f.name} (destroyed)`, { className: 'lbl' }).addTo(chainActive);
+  }
+}
+function updateSiteBtn() {
+  const id = document.getElementById('siteSel').value, b = document.getElementById('siteBtn');
+  b.textContent = siteStatus[id] === 'DESTROYED' ? 'Restore' : 'Destroy';
+}
 
 function flash(p) {
   const m = markers.personnel[p.id];
@@ -377,6 +449,11 @@ function log(html, cls = '', ms = null) {
 }
 
 let bannerTimer;
+function showAlert(html) {
+  const b = document.getElementById('banner');
+  b.innerHTML = html; b.style.display = 'block';
+  clearTimeout(bannerTimer); bannerTimer = setTimeout(() => b.style.display = 'none', BANNER_MS);
+}
 function showBanner(n) {
   const b = document.getElementById('banner');
   const alt = n.nearest_alternative && n.nearest_alternative.note ? `<div class="alt">Suggested: ${esc(n.nearest_alternative.note)}</div>` : '';
@@ -436,6 +513,7 @@ function fillTriggers() {
   document.getElementById('soldierSel').innerHTML = opts(people.filter(p => p.kind === 'SOLDIER'));
   document.getElementById('medicSel').innerHTML = opts(people.filter(p => p.kind === 'MEDIC'));
   const items = new Set(people.flatMap(p => Object.keys(p.stock || {})));
+  document.getElementById('droneSel').innerHTML = Object.values(S.drones).map(d => `<option value="${d.id}">${esc(d.callsign)}</option>`).join('');
   document.getElementById('itemSel').innerHTML = [...items].map(i => `<option value="${i}">${i.replace(/_/g, ' ')}</option>`).join('');
 }
 document.querySelectorAll('[data-sev]').forEach(b => b.onclick = () =>
@@ -451,6 +529,27 @@ map.on('click', e => {
   wrap.classList.remove('placing');
   post('/threats', { name: 'Reported threat', lat: e.latlng.lat, lon: e.latlng.lng, radius_m: 800 });
 });
+document.getElementById('siteSel').onchange = updateSiteBtn;
+document.getElementById('siteBtn').onclick = () => {
+  const id = document.getElementById('siteSel').value;
+  post('/sites', { facility_id: id, status: siteStatus[id] === 'DESTROYED' ? 'OPERATIONAL' : 'DESTROYED' });
+};
+// Toggle between the tactical sector and the whole chain (Poland to the front).
+let sectorView = null;
+document.getElementById('chainBtn').onclick = e => {
+  if (!sectorView) {
+    sectorView = [map.getCenter(), map.getZoom()];
+    map.addLayer(layers.chain); map.addLayer(chainActive);
+    const pts = [...Object.values(S.facilities), ...Object.values(S.depots)].map(x => [x.lat, x.lon]);
+    map.fitBounds(pts, { padding: [40, 40] });
+    e.currentTarget.textContent = 'Back to the sector';
+  } else {
+    map.setView(sectorView[0], sectorView[1]); sectorView = null;
+    map.removeLayer(layers.chain); map.removeLayer(chainActive);
+    e.currentTarget.textContent = 'Show supply chain on map';
+  }
+};
+document.getElementById('lostBtn').onclick = () => post('/losses', { drone_id: document.getElementById('droneSel').value });
 document.getElementById('demoBtn').onclick = () => post('/scenario/demo');                       // DEMO
 document.getElementById('resetBtn').onclick = () => { document.getElementById('log').innerHTML = ''; latencies.length = 0; post('/reset'); };
 

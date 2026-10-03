@@ -214,3 +214,35 @@ Each query shows its milliseconds and row count; click one to see the full text.
 
 **To change:** move or resize `DEMO_THREAT`, or edit the `(7.0, {"type": "THREAT"})` line in `DEMO_SCRIPT`. There is no range re-check after a detour (a `TUNE` note in `reroute`); the 1.2 safety margin covers demo-sized detours. The stored `DISPATCHED_TO.route_json` keeps the original route.
 
+## 14. Drone shot down (`POST /losses`, `engine.drone_lost`)
+
+**What happens:** when a drone is reported lost, five things follow in order:
+1. The tracker takes it out of the air where it is (`tracker.lose`).
+2. The graph marks it `LOST` with every item on board written off, and its `DISPATCHED_TO` edge becomes `LOST` (`repo.lose_drone`).
+3. The loss spot becomes a 600 m threat zone, so nothing else flies into the same fire. Drones already flying nearby reroute.
+4. If it was carrying someone's supplies, the request is retried at once as `<id>-r1` with the original timestamp. It gets the next-best drone, or if none is free it goes to the front of its triage level in the queue.
+5. The dashboard greys the drone out and shows "HAWK 1 shot down on its way to BADGER 2-4. Re-sending the supplies."
+
+**How to trigger it:** use the **Shot down** row in the trigger panel, call `POST /losses {"drone_id"}`, or watch the demo scenario, where HAWK 1 is lost at 19 s and BADGER 2-4 is served first when FALCON 1 comes home.
+
+**To change:** `LOSS_THREAT_RADIUS_M` in dev_server.py sets the size of the zone. A `LOST` drone never counts as busy, so a request that only a lost drone could have served gets `NO_STOCK` instead of waiting forever.
+
+## 15. Destroyed sites and supply-chain re-planning (`backend/app/supply_chain.py`, `POST /sites`)
+
+**What it does:** every supplier, hub and hospital has a `status` in the graph (`OPERATIONAL` or `DESTROYED`). `best_path()` finds the fastest working chain that can deliver a standard restock order (`RESTOCK_ORDER`: 10 each of tourniquets, blood, gauze and chest seals) to a launch site. It searches backwards along the `SUPPLIES` edges, skips destroyed sites, and lets sites in between pass stock on without holding it themselves.
+
+**What you see:** the **Resupply routes to launch sites** panel shows each launch site's time and chain. Destroying a site with the **Destroy** button, `POST /sites`, or the demo at 27 s (the Zaporizhzhia forward point) re-plans every chain in about 30 ms on TuringDB. The panel strikes through the old time (60 min) and shows the new one (1 h 25 min, by helicopter from the Role 3 hospital via the field hospital and a drone relay), and a banner explains it. **Show supply chain on map** zooms out to the whole chain with the active routes in green and destroyed sites marked ✕. **Restore** puts a site back in service.
+
+**Backup links:** the seed has four backup links so knocking out one hub leaves a slower working chain:
+- Dnipro hub straight to Launch Site North
+- forward point to the field hospital
+- two cargo-drone relays between launch sites
+
+Destroy the field hospital as well and Launch Site West is cut off: the panel shows "cut off".
+
+**Also uses it:** when no drone can go and no launch site holds the items, the "no drone" suggestion names the fastest working chain instead of a destroyed site.
+
+**To change:** `RESTOCK_ORDER` sets what a chain must deliver. Add or retime `SUPPLY_LINKS` in seed.py, then run `python scripts/export_mock.py`.
+
+**Not modelled yet:** a launch site's own stock doesn't go down when drones reload, and nothing places restock orders automatically.
+

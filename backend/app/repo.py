@@ -41,6 +41,9 @@ class GraphRepo(Protocol):
         ...
     def list_facilities(self) -> list[Facility]: ...
     def list_supply_links(self) -> list[SupplyLink]: ...
+    def set_facility_status(self, facility_id: str, status: str) -> None:
+        """OPERATIONAL or DESTROYED. A destroyed site drops out of every supply path."""
+        ...
     def find_resupply_sources(self, depot_id: str, items: dict[str, int]) -> list[tuple[Facility, SupplyLink]]:
         """Upstream facilities that restock `depot_id` and hold enough of `items`, fastest first."""
         ...
@@ -63,6 +66,9 @@ class GraphRepo(Protocol):
         ...
     def complete_dispatch(self, request_id: str, ts: Optional[float] = None) -> Optional[Dispatch]:
         """Mark delivered: move items from drone payload into the recipient's stock (medics)."""
+        ...
+    def lose_drone(self, drone_id: str, request_id: Optional[str] = None, ts: Optional[float] = None) -> None:
+        """Drone shot down / crashed: status LOST, payload written off, its dispatch (if any) marked LOST."""
         ...
     def list_dispatches(self) -> list[Dispatch]: ...
 
@@ -130,6 +136,9 @@ class InMemoryRepo:
                 out.append((f, link))
         return sorted(out, key=lambda fl: fl[1].lead_time_min)
 
+    def set_facility_status(self, facility_id, status):
+        self.facilities[facility_id].status = status
+
     # Hot path for dispatch: must stay a single pass / single query.
     def find_candidate_drones(self, items):
         return [d for d in self.drones.values()
@@ -177,6 +186,14 @@ class InMemoryRepo:
                 person.stock[item] = person.stock.get(item, 0) + qty
         disp.status = "DELIVERED"
         return disp
+
+    def lose_drone(self, drone_id, request_id=None, ts=None):
+        with self._lock:
+            d = self.drones[drone_id]
+            d.status, d.claimed_by = "LOST", None
+            d.payload = {k: 0 for k in d.payload}  # supplies on board are gone
+            if request_id in self.dispatches:
+                self.dispatches[request_id].status = "LOST"
 
     def list_dispatches(self):
         return list(self.dispatches.values())

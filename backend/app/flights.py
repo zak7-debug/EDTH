@@ -104,6 +104,17 @@ class FlightTracker:
                                    new_m / f.speed_mps, new_m - old_m, zone.name))
         return out
 
+    def lose(self, drone_id: str) -> Optional[dict]:
+        """Take a drone out of the air where it is now. Returns where and what it was doing,
+        or None if it wasn't flying. HOOK: POST /losses calls this first."""
+        f = self.flights.pop(drone_id, None)
+        self._loadout.pop(drone_id, None)  # it never comes home to reload
+        if f is None:
+            return None
+        lat, lon = f.position()
+        return {"lat": lat, "lon": lon, "phase": f.phase, "request_id": f.request_id,
+                "recipient_id": f.dispatch.recipient_id if f.dispatch else None}
+
     def step(self, dt_real: float) -> list[dict]:
         """Advance every flight by dt_real wall seconds. Returns /ws messages to broadcast, in order."""
         out: list[dict] = []

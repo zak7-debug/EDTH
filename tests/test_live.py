@@ -45,11 +45,16 @@ def test_dev_server_event_roundtrip(monkeypatch):
         with client.websocket_connect("/ws") as ws:
             assert ws.receive_json()["type"] == "snapshot"
             assert ws.receive_json()["type"] == "queue"
+            chain = ws.receive_json()
+            assert chain["type"] == "supply_chain" and len(chain["data"]["routes"]) == 3
             r = client.post("/events", json={"type": "CASUALTY", "subject_id": "sol-10", "severity": "CRITICAL"})
             assert r.status_code == 200 and r.json()["drone_id"]
             assert ws.receive_json()["type"] == "event"
             d = ws.receive_json()
             assert d["type"] == "dispatch" and d["data"]["latency_ms"] < 50
         assert client.post("/events", json={"type": "CASUALTY", "subject_id": "nobody"}).status_code == 404
+        r = client.post("/sites", json={"facility_id": "dc-02", "status": "DESTROYED"})
+        assert r.status_code == 200 and r.json()["status"]["dc-02"] == "DESTROYED"
+        assert client.post("/losses", json={"drone_id": "drn-08"}).json()["ok"]  # charging, empty-handed
         assert "<title>" in client.get("/").text
         assert client.get("/mock/snapshot.json").status_code == 200
