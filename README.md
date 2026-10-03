@@ -9,7 +9,7 @@ When a soldier goes critical or a medic runs low, the system finds the best dron
 EDTH_REPO=memory ./start.sh   # same, without a database
 ```
 
-Open http://localhost:8000 and press **Run demo scenario**. TuringDB's graph UI is at http://localhost:8080 while it runs. First run creates `.venv` and installs `requirements.txt` (Python 3.11+).
+Open http://localhost:8000 and press **Run demo scenario**. Rerun `./start.sh` before every rehearsal: TuringDB keeps every change's history, so a long session gets slower (docs/turingdb-notes.md). TuringDB's graph UI is at http://localhost:8080 while it runs. First run creates `.venv` and installs `requirements.txt` (Python 3.11+).
 
 ## Test
 

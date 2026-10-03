@@ -17,6 +17,20 @@ Reproduce with `python scripts/turingdb_smoke.py embedded` or, with a server run
 
 **Decision:** run the server with `turingdb start -demon -in-memory` (what `start.sh` does). Disk-backed submits rewrite the graph file every time; we reseed on start anyway, so persistence buys nothing.
 
+## Soak test (300 dispatch cycles, in-memory server, 2026-10-03)
+
+Each cycle: decide, record, deliver, free the drone, reload it (about 8 write changes).
+
+| After | Server memory | Decision median / p95 | Writes per cycle (median) |
+| --- | --- | --- | --- |
+| start | 74 MB | | |
+| 100 requests | 385 MB | 14 / 20 ms | 66 ms |
+| 200 requests | 721 MB | 23 / 28 ms | 98 ms |
+| 300 requests | 1,101 MB | 30 / 40 ms | 115 ms |
+| reseed (`POST /reset`) | 1,169 MB | 20 ms | |
+
+Every submitted change keeps its history, so memory grows about 3.5 MB per request and reads slow down as it grows. Reseeding helps speed a little but frees no memory. A demo run is about 15 requests, so this doesn't matter on stage. **Restart TuringDB (rerun `./start.sh`) before every rehearsal and before the demo.** Don't leave a simulator firing events into it for hours: at one event every 5 s it would reach about 2.5 GB within the hour. Reproduce with the soak script described in docs/turingdb-slide.md.
+
 ## What works
 
 - Server: `turingdb start -demon [-in-memory] [-ui]`, `turingdb stop`. Port 6666, UI on 8080 with `-ui`.
