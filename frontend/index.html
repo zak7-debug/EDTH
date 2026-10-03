@@ -27,218 +27,350 @@
 <script src="vendor/leaflet/leaflet.js"></script>
 <script src="mock/snapshot.js"></script>
 <style>
-  /* TUNE: theme colours. Status colours are reused by the map markers below. */
+  /* TUNE: theme. Frosted-glass layers over a full-screen map, after Apple's current look: one row of
+     big numbers on top, a dock of grouped actions on the left that opens a sheet, live missions on
+     the right. Status colours are reused by the map markers below. */
   :root {
-    --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --muted: #8b949e;
-    --ok: #3fb950; --wounded: #f0b429; --critical: #f85149; --medic: #58a6ff;
-    --route: #39d0d8; --zone: #f85149; --depot: #d2a8ff; --accent: #39d0d8;
+    --bg: #05070a; --text: #f5f5f7; --muted: #a1a1aa; --faint: rgba(255,255,255,.08); --line: rgba(255,255,255,.14);
+    --glass: rgba(26,28,34,.58); --glass-strong: rgba(30,32,40,.78); --blur: blur(26px) saturate(170%);
+    --ok: #30d158; --wounded: #ffd60a; --critical: #ff453a; --medic: #0a84ff; --block: #ff9f0a;
+    --route: #64d2ff; --zone: #ff453a; --depot: #bf5af2; --accent: #64d2ff; --evac: #ff375f; --blue: #0a84ff;
+    --r-lg: 26px; --r-md: 18px; --r-sm: 12px;
+    color-scheme: dark;
+    --shadow: 0 1px 0 rgba(255,255,255,.16) inset, 0 0 0 .5px rgba(255,255,255,.06) inset, 0 18px 50px rgba(0,0,0,.5);
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
-    font: 17px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }  /* TUNE: base font for the projector */
-  body { display: grid; grid-template-rows: auto 1fr; }
-  header { display: flex; align-items: center; gap: 20px; padding: 10px 18px; border-bottom: 1px solid var(--line);
-    background: var(--panel); flex-wrap: wrap; }
-  header h1 { font-size: 22px; margin: 0; letter-spacing: .5px; }
-  .pill { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 14px; color: var(--muted); }
-  .pill.live { color: var(--ok); border-color: var(--ok); }
-  .pill.mock { color: var(--wounded); border-color: var(--wounded); }
-  /* Headline numbers: decision latency and free drones, readable from the back of the room. */
-  .kpis { display: flex; gap: 28px; margin-left: auto; align-items: flex-end; }
-  .kpi .k { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); display: block; }
-  .kpi .v { font: 700 40px/1 ui-monospace, Menlo, monospace; color: var(--accent); }
-  .kpi .u { font-size: 16px; color: var(--muted); margin-left: 2px; }
-  .kpi .sub { font-size: 14px; color: var(--muted); margin-left: 10px; } .kpi .sub b { color: var(--text); font-family: ui-monospace, monospace; }
-  .kpi .v.none { color: var(--critical); }
-  button { background: #21262d; color: var(--text); border: 1px solid var(--line); border-radius: 8px;
-    padding: 10px 16px; min-height: 44px; font: inherit; cursor: pointer; }  /* TUNE: 44px = easy to hit */
-  button:hover { border-color: var(--accent); }
-  button.primary { background: #1f6feb; border-color: #1f6feb; font-weight: 600; }
-  button.crit { border-color: var(--critical); color: var(--critical); }
-  button.wnd { border-color: var(--wounded); color: var(--wounded); }
-  main { display: grid; grid-template-columns: 1fr 480px; min-height: 0; }
-  #mapwrap { position: relative; min-height: 0; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+    font: 17px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased; }  /* TUNE: base font for the projector */
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  /* A glass layer: everything that floats over the map. */
+  .glass { background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+    border: 1px solid var(--line); box-shadow: var(--shadow); border-radius: var(--r-lg); }
+
+  /* Map fills the screen; every panel floats on it. */
+  #mapwrap { position: fixed; inset: 0; }
   #map { position: absolute; inset: 0; background: #0b0f14; }
-  aside { border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
-  section { padding: 12px 14px; border-bottom: 1px solid var(--line); }
-  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 0 0 8px; }
+
+  /* Top bar: name and connection, the two headline numbers, run / reset. */
+  #top { position: fixed; top: 14px; left: 14px; right: 14px; z-index: 1100; display: flex; align-items: center; gap: 14px;
+    padding: 8px 10px 8px 20px; border-radius: 999px; pointer-events: auto; }
+  #top h1 { font-size: 19px; font-weight: 700; letter-spacing: -.2px; margin: 0; white-space: nowrap; }
+  .pill { padding: 3px 11px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--muted); background: var(--faint); white-space: nowrap; }
+  .pill::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; margin-right: 6px; vertical-align: 1px; }
+  .pill.live { color: var(--ok); } .pill.mock { color: var(--wounded); }
+  .kpis { display: flex; gap: 8px; margin: 0 auto; }
+  .kpi { display: flex; flex-direction: column; align-items: center; padding: 2px 18px; border-radius: 999px; }
+  .kpi .k { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+  .kpi .v { font: 700 34px/1.05 ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent); letter-spacing: -1px; }
+  .kpi .u { font-size: 14px; color: var(--muted); margin-left: 2px; letter-spacing: 0; }
+  .kpi .sub { font-size: 12px; color: var(--muted); } .kpi .sub b { color: var(--text); font-family: ui-monospace, monospace; }
+  .kpi .v.none { color: var(--critical); }
+  .kpi + .kpi { border-left: 1px solid var(--line); border-radius: 0; }
+
+  /* Buttons: capsules. 44px minimum, big enough for gloves and a projector. */
+  button { -webkit-appearance: none; appearance: none; background: rgba(255,255,255,.1); color: var(--text); border: 0;
+    border-radius: 999px; padding: 10px 18px; min-height: 44px; font: 600 16px/1 inherit; font-family: inherit; cursor: pointer;
+    transition: background .15s, transform .1s; white-space: nowrap; }
+  button:hover { background: rgba(255,255,255,.17); } button:active { transform: scale(.97); }
+  button.primary { background: var(--blue); color: #fff; } button.primary:hover { background: #2b95ff; }
+  button.crit { background: rgba(255,69,58,.2); color: #ff6961; } button.crit:hover { background: rgba(255,69,58,.32); }
+  button.wnd { background: rgba(255,214,10,.17); color: var(--wounded); } button.wnd:hover { background: rgba(255,214,10,.28); }
+  button.warn { background: rgba(255,159,10,.2); color: var(--block); } button.warn:hover { background: rgba(255,159,10,.32); }
+  button.ghost { background: transparent; } button.ghost:hover { background: var(--faint); }
+  button.small { min-height: 32px; padding: 6px 12px; font-size: 14px; }
+  select, input { -webkit-appearance: none; appearance: none; background: rgba(255,255,255,.08); color: var(--text); border: 1px solid var(--line);
+    border-radius: var(--r-sm); padding: 10px 12px; min-height: 44px; font: inherit; font-size: 16px; min-width: 0; }
+  select { flex: 1; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 17px) 50%, calc(100% - 12px) 50%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 30px; }
+  select option { background: #1c1c1e; }
+  input[type=number] { width: 72px; text-align: center; }
   .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
-  select, input { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px;
-    padding: 9px 10px; min-height: 44px; font: inherit; min-width: 0; }
-  select { flex: 1; }
-  input[type=number] { width: 64px; }
-  /* Active missions: what is flying or driving to whom, with a big countdown. */
-  #missions { max-height: 42vh; overflow-y: auto; flex: none; }
-  #missions .m { display: grid; grid-template-columns: 116px 1fr; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid #21262d; }
-  #missions .m:first-of-type { border-top: 0; }
-  #missions .big { font: 700 34px/1 ui-monospace, Menlo, monospace; color: var(--route); }
-  #missions .m.evac { padding: 4px 0; } #missions .m.evac .big { color: #f778ba; font-size: 24px; } #missions .m.evac .who { font-size: 16px; }
-  #missions .who { font-size: 18px; font-weight: 700; } #missions .who .to { color: var(--muted); font-weight: 400; }
-  #missions .what { font-size: 14px; color: var(--muted); }
-  #queue { background: #2a1416; } #queue:empty { display: none; }
+  .row > button.grow, .row > .grow { flex: 1; }
+
+  /* Segmented control (tabs, road / rail): a sliding light pill in a dark track. */
+  .seg { display: flex; padding: 3px; gap: 2px; background: rgba(0,0,0,.28); border-radius: 999px; }
+  .seg button { flex: 1; background: transparent; color: var(--muted); min-height: 36px; padding: 6px 10px; font-size: 15px; position: relative; }
+  .seg button.on { background: rgba(255,255,255,.18); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+  .seg button.new::after { content: ''; position: absolute; top: 7px; right: 10px; width: 7px; height: 7px; border-radius: 50%; background: var(--block); }
+
+  /* Dock: the first layer of buttons. One tap opens that group's sheet (the second layer). */
+  #dock { position: fixed; left: 14px; top: 50%; transform: translateY(-50%); z-index: 1100; display: flex; flex-direction: column;
+    gap: 4px; padding: 8px; border-radius: 30px; }
+  #dock button { width: 68px; min-height: 62px; padding: 8px 0 6px; border-radius: 22px; background: transparent; color: var(--text);
+    display: flex; flex-direction: column; align-items: center; gap: 4px; font: 600 11px/1 inherit; font-family: inherit; }
+  #dock button svg { width: 26px; height: 26px; }
+  #dock button:hover { background: var(--faint); }
+  #dock button.on { background: rgba(255,255,255,.2); }
+  #dock button.armed { background: rgba(255,159,10,.3); color: var(--block); }
+  #dock button[data-pane=casualty] svg { color: var(--critical); } #dock button[data-pane=restock] svg { color: var(--medic); }
+  #dock button[data-pane=threat] svg { color: #ff6961; } #dock button[data-pane=block] svg { color: var(--block); }
+  #dock button[data-pane=drone] svg { color: var(--accent); } #dock button[data-pane=sites] svg { color: var(--depot); }
+  #dock .sep { height: 1px; background: var(--line); margin: 4px 10px; }
+  .badge { position: absolute; margin: -6px 0 0 30px; min-width: 18px; height: 18px; border-radius: 9px; background: var(--block); color: #000;
+    font: 700 11px/18px system-ui; text-align: center; padding: 0 5px; }
+
+  /* Sheet: the group's controls, floating next to the dock. */
+  #sheet { position: fixed; left: 100px; top: 50%; transform: translateY(-50%) scale(.96); opacity: 0; pointer-events: none; z-index: 1090;
+    width: 360px; max-height: calc(100vh - 140px); overflow-y: auto; padding: 16px 16px 10px; background: var(--glass-strong);
+    transition: opacity .18s, transform .18s; }
+  #sheet.open { opacity: 1; transform: translateY(-50%) scale(1); pointer-events: auto; }
+  .pane { display: none; } .pane.on { display: block; }
+  .pane h2 { font-size: 20px; font-weight: 700; margin: 0 0 4px; letter-spacing: -.2px; display: flex; align-items: center; }
+  .pane h2 .x { margin-left: auto; min-height: 30px; width: 30px; padding: 0; font-size: 17px; color: var(--muted); }
+  .pane .hint { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+  .pane .group { background: rgba(255,255,255,.05); border-radius: var(--r-md); padding: 10px 10px 2px; margin-bottom: 10px; }
+  .pane .group h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 2px 4px 8px; font-weight: 600; }
+  #blockList .b { display: flex; align-items: center; gap: 10px; padding: 6px 4px; border-top: 1px solid var(--faint); font-size: 15px; }
+  #blockList .b:first-child { border-top: 0; } #blockList .b .ic { font-size: 18px; } #blockList .b span { flex: 1; }
+  #blockList .b small { color: var(--muted); display: block; font-size: 13px; }
+
+  /* Right column: what's waiting, what's moving (big countdowns), then log / supply / graph. */
+  #side { position: fixed; top: 112px; right: 14px; bottom: 14px; width: 440px; z-index: 1050; display: flex; flex-direction: column;
+    gap: 10px; transition: transform .25s ease; }
+  #side.hidden { transform: translateX(calc(100% + 20px)); }
+  #side > .card { padding: 14px 16px; flex: none; }
+  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .9px; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  #sideToggle { position: fixed; top: 120px; right: 466px; z-index: 1060; width: 36px; min-height: 36px; padding: 0; font-size: 18px; transition: right .25s; }
+  #sideToggle.out { right: 14px; }
+  #queue { background: rgba(80,16,18,.62); border-color: rgba(255,69,58,.45); } #queue:empty { display: none; }
   #queue h2 { color: #ffb4ab; }
-  /* Secondary panels sit behind tabs so the live picture stays on screen. */
-  .tabs { display: flex; border-bottom: 1px solid var(--line); flex: none; }
-  .tabs button { flex: 1; border: 0; border-radius: 0; background: none; color: var(--muted); font-weight: 600;
-    border-bottom: 3px solid transparent; min-height: 50px; padding: 8px 4px; position: relative; }
-  .tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
-  .tabs button.new::after { content: ''; position: absolute; top: 12px; right: 12px; width: 9px; height: 9px; border-radius: 50%; background: var(--wounded); }
+  #queue .q { display: flex; justify-content: space-between; padding: 3px 0; font-size: 15px; }
+  /* Active missions: what is flying or driving to whom, with a big countdown. */
+  #missions { max-height: 40vh; overflow-y: auto; }
+  #missions .m { display: grid; grid-template-columns: 110px 1fr; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--faint); }
+  #missions .m:first-of-type { border-top: 0; }
+  #missions .big { font: 700 32px/1 ui-monospace, "SF Mono", Menlo, monospace; color: var(--route); letter-spacing: -1px; }
+  #missions .m.evac { padding: 5px 0; } #missions .m.evac .big { color: var(--evac); font-size: 23px; } #missions .m.evac .who { font-size: 15px; }
+  #missions .who { font-size: 17px; font-weight: 700; } #missions .who .to { color: var(--muted); font-weight: 400; }
+  #missions .what { font-size: 14px; color: var(--muted); }
+  #feed { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 10px 0 0; overflow: hidden; }
+  #feed .seg { margin: 0 12px 6px; }
   .tab { display: none; flex: 1; overflow-y: auto; min-height: 0; } .tab.on { display: block; }
-  .ctl label { display: block; font-size: 14px; color: var(--muted); margin: 4px 0 4px; }
-  #log { padding: 0 14px 12px; }
-  #log .e { padding: 8px 0; border-bottom: 1px solid #21262d; font-size: 16px; display: grid;
-    grid-template-columns: 74px 1fr auto; gap: 8px; }
-  #log .t { color: var(--muted); font: 14px ui-monospace, monospace; padding-top: 2px; }
-  #log .ms { font: 600 15px ui-monospace, monospace; color: var(--accent); }
-  #log .dispatch { color: var(--route); } #log .nod { color: var(--critical); } #log .deliv { color: var(--ok); }
+  .tab section { padding: 10px 16px; border-bottom: 1px solid var(--faint); }
+  .tab section:last-child { border-bottom: 0; }
+  .tab section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .9px; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  #log { padding: 0 16px 12px; }
+  #log .e { padding: 8px 0; border-bottom: 1px solid var(--faint); font-size: 15px; display: grid; grid-template-columns: 66px 1fr auto; gap: 8px; }
+  #log .t { color: var(--muted); font: 13px ui-monospace, monospace; padding-top: 2px; }
+  #log .ms { font: 600 14px ui-monospace, monospace; color: var(--accent); }
+  #log .dispatch { color: var(--route); } #log .nod { color: #ff6961; } #log .deliv { color: var(--ok); }
+  #log .reroute, #log .block { color: var(--block); }
+  #log .evac { color: #ff6482; } #log .stock { color: #da8fff; } #log .voice { color: var(--text); }
+  #log .voice q { color: var(--muted); font-style: italic; }
   /* Graph queries panel (query_log messages) */
   #queries .qh { font-size: 14px; color: var(--muted); margin-bottom: 4px; }
   #queries .qh b { color: var(--accent); font-family: ui-monospace, monospace; }
-  #queries .cy { font: 12px/1.35 ui-monospace, Menlo, monospace; color: #c9d1d9; background: var(--bg); border: 1px solid var(--line);
-    border-radius: 6px; padding: 5px 7px; margin-bottom: 4px; max-height: 64px; overflow: hidden; cursor: pointer; word-break: break-all; }
+  #queries .cy { font: 12px/1.35 ui-monospace, Menlo, monospace; color: #d1d1d6; background: rgba(0,0,0,.3); border-radius: 10px; padding: 6px 8px;
+    margin-bottom: 5px; max-height: 64px; overflow: hidden; cursor: pointer; word-break: break-all; }
   #queries .cy.open { max-height: none; }
   #queries .cy .m { float: right; color: var(--accent); font-weight: 700; margin-left: 8px; }
   #queries .cy .w { color: var(--wounded); }
   /* Resupply routes (supply_chain messages) */
-  #chain .r { padding: 5px 0; border-bottom: 1px solid #21262d; font-size: 14px; }
+  #chain .r { padding: 6px 0; border-bottom: 1px solid var(--faint); font-size: 14px; }
   #chain .r:last-of-type { border-bottom: 0; }
   #chain .r b { font-size: 15px; } #chain .mins { float: right; font: 700 15px ui-monospace, monospace; color: var(--ok); }
   #chain .r.changed .mins { color: var(--wounded); } #chain .r.cut .mins { color: var(--critical); }
   #chain .was { color: var(--muted); text-decoration: line-through; font-weight: 400; margin-right: 6px; }
   #chain .via { color: var(--muted); font-size: 13px; }
-  #queue .q { display: flex; justify-content: space-between; padding: 4px 0; font-size: 15px; }
   .empty { color: var(--muted); font-size: 14px; }
   .sev-CRITICAL { color: var(--critical); font-weight: 700; } .sev-WOUNDED { color: var(--wounded); font-weight: 700; }
   .sev-LOW_STOCK { color: var(--medic); font-weight: 700; }
-  #banner { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 1000; max-width: 80%;
-    background: #3d1214; border: 2px solid var(--critical); color: #ffdcd7; padding: 14px 20px; border-radius: 10px;
-    font-size: 20px; display: none; cursor: pointer; box-shadow: 0 8px 30px #000a; }
-  #banner b { color: #fff; } #banner .alt { font-size: 16px; margin-top: 6px; color: #ffb4ab; }
-  #toast { position: absolute; bottom: 18px; left: 18px; z-index: 1000; background: #1f2937; border: 1px solid var(--line);
-    padding: 8px 12px; border-radius: 8px; display: none; }
-  .legend { position: absolute; bottom: 18px; right: 18px; z-index: 900; background: #161b22e6; border: 1px solid var(--line);
-    border-radius: 8px; padding: 8px 12px; font-size: 15px; }
-  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin: 0 6px 0 10px; vertical-align: -1px; }
+
+  /* Alerts: a glass card dropping from the top bar. */
+  #banner { position: fixed; top: 112px; left: 50%; transform: translateX(-50%); z-index: 1200; max-width: min(720px, 80vw);
+    background: rgba(70,14,16,.78); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid rgba(255,69,58,.55);
+    color: #ffe0dc; padding: 14px 20px; border-radius: var(--r-md); font-size: 19px; display: none; cursor: pointer; box-shadow: var(--shadow); }
+  #banner b { color: #fff; } #banner .alt { font-size: 15px; margin-top: 6px; color: #ffb4ab; }
+  #toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 1200; padding: 10px 18px; border-radius: 999px;
+    display: none; font-size: 16px; font-weight: 600; }
+  .legend { position: fixed; bottom: 14px; left: 14px; z-index: 900; padding: 8px 14px; font-size: 13px; border-radius: 999px; color: #d1d1d6; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin: 0 5px 0 10px; vertical-align: 0; }
   .legend i:first-child { margin-left: 0; }
+  .offline-note { position: fixed; top: 112px; left: 50%; transform: translateX(-50%); z-index: 900; border-radius: 999px; padding: 5px 12px; font-size: 13px; color: var(--muted); display: none; }
+  /* Leaflet controls in glass too, bottom left above the legend */
+  .leaflet-control-zoom, .leaflet-control-layers { background: var(--glass) !important; -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+    border: 1px solid var(--line) !important; border-radius: var(--r-sm) !important; box-shadow: var(--shadow) !important; color: var(--text); overflow: hidden; }
+  .leaflet-control-zoom a { background: transparent !important; color: var(--text) !important; border-color: var(--line) !important; }
+  .leaflet-control-layers-expanded { padding: 10px 14px; font-size: 14px; }
+  .leaflet-control-layers-toggle { filter: invert(1); }
+  .leaflet-bottomleft { bottom: 50px; } .leaflet-bottomright .leaflet-control-attribution { background: rgba(0,0,0,.45); color: #888; border-radius: 8px 0 0 0; }
+  .leaflet-control-attribution a { color: #aaa; }
+
   /* Map markers */
   .drone { display: flex; align-items: center; gap: 5px; white-space: nowrap; font: 700 15px system-ui; color: #fff;
     text-shadow: 0 0 3px #000, 0 0 3px #000; }
-  .drone .dot { width: 18px; height: 18px; transform: rotate(45deg); border: 2px solid #fff; flex: none; }
-  .drone .eta { background: var(--route); color: #000; text-shadow: none; padding: 1px 7px; border-radius: 6px; font: 700 17px ui-monospace, monospace; }
-  .depot { width: 18px; height: 18px; background: var(--depot); border: 2px solid #fff; border-radius: 3px; }
+  .drone .dot { width: 18px; height: 18px; transform: rotate(45deg); border: 2px solid #fff; border-radius: 4px; flex: none; }
+  .drone .eta { background: var(--route); color: #000; text-shadow: none; padding: 2px 8px; border-radius: 999px; font: 700 16px ui-monospace, monospace; }
+  .depot { width: 18px; height: 18px; background: var(--depot); border: 2px solid #fff; border-radius: 5px; }
   .medic { width: 20px; height: 20px; border-radius: 50%; background: var(--medic); border: 2px solid #fff; color: #fff;
     font: 900 15px/16px system-ui; text-align: center; }
   .medic.low { box-shadow: 0 0 0 4px var(--wounded); }
-  .flash { animation: flash 1s ease-out 3; } @keyframes flash { 0% { box-shadow: 0 0 0 0 var(--ok); } 100% { box-shadow: 0 0 0 26px transparent; } }
   .lbl { background: transparent; border: 0; box-shadow: none; color: #fff; font: 600 14px system-ui; text-shadow: 0 0 3px #000, 0 0 3px #000, 0 0 3px #000; }
   .lbl::before { display: none; }
   .new-zone { animation: zonepulse 1.2s ease-in-out 5; } @keyframes zonepulse { 50% { fill-opacity: .55; } }
   #mapwrap.placing #map { cursor: crosshair; }
-  #log .reroute { color: var(--wounded); }
-  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--panel); color: var(--text); }
-  .leaflet-popup-content { font-size: 16px; }
+  .leaflet-interactive:focus { outline: none; }
+  .leaflet-popup-content-wrapper { background: var(--glass-strong); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); color: var(--text);
+    border-radius: var(--r-md); border: 1px solid var(--line); }
+  .leaflet-popup-tip { background: rgba(30,32,40,.9); }
+  .leaflet-popup-content { font-size: 15px; }
   .leaflet-popup-content table { border-collapse: collapse; } .leaflet-popup-content td { padding: 1px 8px 1px 0; }
   .low-item { color: var(--wounded); font-weight: 700; }
+  /* Road and rail blocks (blocks.py) */
+  .blk { width: 28px; height: 28px; border-radius: 50%; background: var(--block); border: 2px solid #fff; color: #000; display: grid; place-items: center;
+    font: 900 15px/1 system-ui; box-shadow: 0 0 0 6px rgba(255,159,10,.3), 0 2px 8px #000a; }
+  .blk.rail { background: #ff453a; color: #fff; box-shadow: 0 0 0 6px rgba(255,69,58,.3), 0 2px 8px #000a; }
+  .blk.new { animation: blkpulse 1s ease-out 4; } @keyframes blkpulse { 0% { box-shadow: 0 0 0 0 rgba(255,159,10,.8); } 100% { box-shadow: 0 0 0 26px transparent; } }
   /* Launch-site stock panel (stock_update messages) */
   #stock table { width: 100%; border-collapse: collapse; font: 14px ui-monospace, Menlo, monospace; }
   #stock th { font: 600 12px system-ui; color: var(--muted); text-align: right; padding: 0 0 4px 6px; }
   #stock th:first-child, #stock td:first-child { text-align: left; padding-left: 0; font-family: system-ui; }
-  #stock td { text-align: right; padding: 3px 0 3px 6px; border-top: 1px solid #21262d; }
+  #stock td { text-align: right; padding: 3px 0 3px 6px; border-top: 1px solid var(--faint); }
   #stock td.low { color: var(--critical); font-weight: 700; } #stock td.chg { animation: chg 1.5s ease-out; }
-  @keyframes chg { 0% { background: #39d0d855; } 100% { background: transparent; } }
+  @keyframes chg { 0% { background: rgba(100,210,255,.33); } 100% { background: transparent; } }
   #stock .ord { font-size: 13px; color: var(--muted); padding: 3px 0 0; } #stock .ord b { color: var(--accent); font-family: ui-monospace, monospace; }
   #stock .ord.lost { color: var(--critical); text-decoration: line-through; }
   #stock .beds { font-size: 13px; color: var(--muted); margin-top: 8px; }
   #stock .beds b { color: var(--text); }
-  #log .evac { color: #f778ba; } #log .stock { color: var(--depot); } #log .voice { color: var(--text); }
-  #log .voice q { color: var(--muted); font-style: italic; }
   .amb { display: flex; align-items: center; gap: 4px; white-space: nowrap; font: 700 15px system-ui; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; }
-  .amb .box { width: 18px; height: 14px; background: #f778ba; border: 2px solid #fff; border-radius: 3px; color: #fff; font: 900 11px/10px system-ui; text-align: center; flex: none; }
-  .amb .eta { background: #f778ba; color: #000; text-shadow: none; padding: 1px 7px; border-radius: 6px; font: 700 17px ui-monospace, monospace; }
-  .hosp { width: 20px; height: 20px; background: #f778ba; border: 2px solid #fff; border-radius: 4px; color: #fff; font: 900 15px/16px system-ui; text-align: center; }
+  .amb .box { width: 18px; height: 14px; background: var(--evac); border: 2px solid #fff; border-radius: 4px; color: #fff; font: 900 11px/10px system-ui; text-align: center; flex: none; }
+  .amb .eta { background: var(--evac); color: #fff; text-shadow: none; padding: 2px 8px; border-radius: 999px; font: 700 16px ui-monospace, monospace; }
+  .amb .eta:empty { display: none; }
+  .hosp { width: 20px; height: 20px; background: var(--evac); border: 2px solid #fff; border-radius: 6px; color: #fff; font: 900 15px/16px system-ui; text-align: center; }
   .hosp.down { background: #555; }
-  .hosp.temp { background: #f0b429; color: #000; }
+  .hosp.temp { background: #ffd60a; color: #000; }
   /* A temporary site still setting up (resilience.py): dashed, with a countdown to opening */
-  .hosp.setup { background: #f0b42966; border-style: dashed; color: #000; animation: zonepulse 1.2s ease-in-out infinite; }
-  .setupeta { position: absolute; left: 24px; top: 1px; background: #f0b429; color: #000; padding: 1px 6px; border-radius: 6px;
+  .hosp.setup { background: #ffd60a66; border-style: dashed; color: #000; animation: zonepulse 1.2s ease-in-out infinite; }
+  .setupeta { position: absolute; left: 24px; top: 1px; background: #ffd60a; color: #000; padding: 1px 7px; border-radius: 999px;
     font: 700 13px ui-monospace, monospace; white-space: nowrap; }
   /* Restock shipments on the way (stock_update orders), moving along their legs */
   .ship { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
   .ship .ic { font-size: 20px; line-height: 1; filter: drop-shadow(0 0 2px #000); }
-  .ship .eta { background: var(--depot); color: #000; padding: 1px 6px; border-radius: 6px; font: 700 14px ui-monospace, monospace; }
+  .ship .eta { background: var(--depot); color: #fff; padding: 1px 7px; border-radius: 999px; font: 700 14px ui-monospace, monospace; }
   /* Suggested temporary sites (supply_chain.suggestions, resilience.py) */
-  .sugg { width: 22px; height: 22px; border: 3px dashed #f0b429; border-radius: 50%; background: #f0b42933; color: #f0b429;
+  .sugg { width: 22px; height: 22px; border: 3px dashed #ffd60a; border-radius: 50%; background: #ffd60a33; color: #ffd60a;
     font: 900 15px/16px system-ui; text-align: center; animation: zonepulse 1.2s ease-in-out infinite; }
-  #suggest .s { margin-top: 8px; padding: 8px; border: 1px dashed #f0b429; border-radius: 6px; font-size: 14px; }
-  #suggest .s b { color: #f0b429; } #suggest .s ul { margin: 4px 0 6px 18px; padding: 0; color: var(--muted); }
+  #suggest .s { margin-top: 8px; padding: 10px; border: 1px dashed #ffd60a; border-radius: var(--r-sm); font-size: 14px; }
+  #suggest .s b { color: #ffd60a; } #suggest .s ul { margin: 4px 0 6px 18px; padding: 0; color: var(--muted); }
   #suggest .note { margin-top: 6px; color: var(--muted); font-size: 14px; }
-  .deploy { background: #f0b429 !important; color: #000 !important; font-weight: 700; }
+  .deploy { background: #ffd60a !important; color: #000 !important; font-weight: 700; }
   #map.offline { background-color: #0b0f14; }
-  .offline-note { position: absolute; top: 14px; right: 60px; z-index: 900; background: #161b22e6; border: 1px solid var(--line);
-    border-radius: 8px; padding: 4px 10px; font-size: 13px; color: var(--muted); display: none; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; grid-template-rows: 60vh auto; } aside { border-left: 0; } }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .glass, #sheet { background: rgba(28,30,36,.94); } }
+  /* Narrow screens: the dock becomes a bar along the bottom, the sheet sits above it, the side column below the map. */
+  @media (max-width: 900px) {
+    #top { flex-wrap: wrap; border-radius: var(--r-lg); padding: 8px 12px; } .kpis { order: 3; width: 100%; justify-content: center; }
+    .kpi .v { font-size: 26px; } #top .actions button { padding: 8px 12px; }
+    #dock { top: auto; bottom: 10px; left: 10px; right: 10px; transform: none; flex-direction: row; overflow-x: auto; border-radius: 26px; }
+    #dock .sep { width: 1px; height: auto; margin: 8px 2px; } #dock button { width: 60px; flex: none; }
+    #sheet { left: 10px; right: 10px; width: auto; top: auto; bottom: 100px; transform: translateY(10px); max-height: 55vh; }
+    #sheet.open { transform: none; }
+    #side { top: auto; max-height: 30vh; left: 10px; right: 10px; width: auto; bottom: 100px; overflow-y: auto; } #sideToggle { display: none; }
+    #feed, .offline-note { display: none; } #missions { max-height: none; }
+    #toast { bottom: 110px; max-width: 90vw; border-radius: 18px; text-align: center; } #banner { top: auto; bottom: 110px; font-size: 16px; }
+    .legend, .leaflet-bottomleft { display: none; }
+  }
 </style>
 </head>
 <body>
-<header>
+<div id="mapwrap">
+  <div id="map"></div>
+</div>
+<header id="top" class="glass">
   <h1>Medic Resupply Ops</h1>
   <span id="conn" class="pill">connecting</span>
-  <button class="primary" id="demoBtn">Run demo scenario</button>
-  <button id="threatBtn" class="crit" title="Then click the map where the threat is">Report threat</button>
-  <button id="resetBtn" title="Reseed the world between rehearsals">Reset</button>
   <div class="kpis">
-    <div class="kpi" title="From the event arriving to the drone being chosen"><span class="k">Event → dispatch</span><span class="v" id="latLast">--</span><span class="u">ms</span><span class="sub">avg <b id="latAvg">--</b></span></div>
-    <div class="kpi"><span class="k">Drones free</span><span class="v" id="free">--</span></div>
+    <div class="kpi" title="From the event arriving to the drone being chosen"><span class="k">Event → dispatch</span><div><span class="v" id="latLast">--</span><span class="u">ms</span></div><span class="sub">avg <b id="latAvg">--</b> ms</span></div>
+    <div class="kpi"><span class="k">Drones free</span><span class="v" id="free">--</span><span class="sub">ready to fly</span></div>
+  </div>
+  <div class="actions" style="display:flex;gap:6px">
+    <button class="primary" id="demoBtn">▶ Run demo</button>
+    <button id="resetBtn" title="Reseed the world between rehearsals">Reset</button>
   </div>
 </header>
-<main>
-  <div id="mapwrap">
-    <div id="map"></div>
-    <div id="banner" title="click to dismiss"></div>
-    <div id="toast"></div>
-    <div class="offline-note" id="offlineNote">Offline map: run scripts/fetch_tiles.py once online</div>
-    <div class="legend">
-      <i style="background:var(--ok)"></i>OK<i style="background:var(--wounded)"></i>Wounded<i style="background:var(--critical)"></i>Critical<i style="background:var(--medic)"></i>Medic<i style="background:var(--depot);border-radius:2px"></i>Launch site<i style="background:#f778ba;border-radius:2px"></i>Hospital / evacuation
-    </div>
+
+<!-- First layer: the dock. Each button opens its group of controls in the sheet (second layer). -->
+<nav id="dock" class="glass" aria-label="Actions">
+  <button data-pane="casualty" title="Report a casualty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>Casualty</button>
+  <button data-pane="restock" title="Medic low on stock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"/><path d="M3 7.5 12 12l9-4.5M12 12v9"/></svg>Restock</button>
+  <div class="sep"></div>
+  <button data-pane="threat" title="Report a threat zone (closes air and roads)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17v.01"/></svg>Threat</button>
+  <button data-pane="block" title="Block a road or rail line (ground only)"><span class="badge" id="blockCount" style="display:none">0</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"/><path d="M7.5 12h9"/></svg>Block</button>
+  <button data-pane="drone" title="Drone shot down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="8" y="8" width="8" height="8" rx="2" transform="rotate(45 12 12)"/><path d="M4 4l3 3M20 4l-3 3M4 20l3-3M20 20l-3-3"/></svg>Drone</button>
+  <button data-pane="sites" title="Hubs, hospitals and the supply chain"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 21V9l9-6 9 6v12z"/><path d="M9 21v-6h6v6"/></svg>Sites</button>
+</nav>
+
+<!-- Second layer: the sheet. One pane at a time, grouped like a settings card. -->
+<div id="sheet" class="glass" role="dialog">
+  <div class="pane" data-pane="casualty">
+    <h2>Casualty <button class="ghost x" data-close>✕</button></h2>
+    <p class="hint">The soldier's medic treats them, then they go by road to the fastest hospital with a bed.</p>
+    <div class="group"><h3>Who</h3><div class="row"><select id="soldierSel"></select></div></div>
+    <div class="row"><button class="crit grow" data-sev="CRITICAL">Critical</button><button class="wnd grow" data-sev="WOUNDED">Wounded</button></div>
   </div>
-  <aside>
-    <section id="queue"></section>
-    <section id="missions"><h2>In the air and on the road</h2><div class="empty">Nothing under way</div></section>
-    <nav class="tabs">
-      <button data-tab="log" class="on">Log</button><button data-tab="supply">Supply</button>
-      <button data-tab="graph">Graph</button><button data-tab="controls">Controls</button>
+  <div class="pane" data-pane="restock">
+    <h2>Medic restock <button class="ghost x" data-close>✕</button></h2>
+    <p class="hint">The closest suitable drone is dispatched to the medic.</p>
+    <div class="group"><h3>Medic</h3><div class="row"><select id="medicSel"></select></div></div>
+    <div class="group"><h3>What</h3><div class="row"><select id="itemSel"></select><input id="qty" type="number" min="1" value="2" aria-label="quantity"></div></div>
+    <div class="group"><h3>How soon</h3><div class="row"><div class="seg grow" id="urgSeg"><button data-urg="CRITICAL">Critical</button><button data-urg="URGENT" class="on">Urgent</button><button data-urg="NON_URGENT">Routine</button></div></div></div>
+    <div class="row"><button class="primary grow" id="lowBtn">Request restock</button></div>
+  </div>
+  <div class="pane" data-pane="threat">
+    <h2>Threat <button class="ghost x" data-close>✕</button></h2>
+    <p class="hint">Air defence or fire on the ground. Closes the air and the roads under it: drones and vehicles reroute.</p>
+    <div class="row"><button class="crit grow" id="threatBtn">Tap the map to place</button></div>
+  </div>
+  <div class="pane" data-pane="block">
+    <h2>Road and rail blocks <button class="ghost x" data-close>✕</button></h2>
+    <p class="hint">Ground only: trucks, ambulances and trains reroute, drones fly over.</p>
+    <div class="row"><button class="warn grow" id="roadBlockBtn">⛔ Block a road</button><button class="crit grow" id="railBlockBtn">🚆 Cut a rail line</button></div>
+    <div class="group" style="margin-top:6px"><h3>In place</h3><div id="blockList"><div class="empty" style="padding:0 4px 8px">No blocks</div></div></div>
+    <div class="row"><button class="ghost grow small" id="liftAllBtn" style="display:none">Lift all blocks</button></div>
+  </div>
+  <div class="pane" data-pane="drone">
+    <h2>Drone shot down <button class="ghost x" data-close>✕</button></h2>
+    <p class="hint">Its delivery is re-sent with the next-best drone and the spot becomes a threat zone.</p>
+    <div class="group"><h3>Drone</h3><div class="row"><select id="droneSel"></select></div></div>
+    <div class="row"><button class="crit grow" id="lostBtn">Shot down</button></div>
+  </div>
+  <div class="pane" data-pane="sites">
+    <h2>Sites <button class="ghost x" data-close>✕</button></h2>
+    <p class="hint">Destroy a hub or hospital and the supply chain re-plans round it.</p>
+    <div class="group"><h3>Hub or hospital</h3><div class="row"><select id="siteSel"></select></div></div>
+    <div class="row"><button class="crit grow" id="siteBtn">Destroy</button></div>
+    <div class="row"><button class="grow" id="chainBtn">Show supply chain on map</button></div>
+  </div>
+</div>
+
+<button id="sideToggle" class="glass" title="Hide or show the side panel">›</button>
+<aside id="side">
+  <section id="queue" class="glass card"></section>
+  <section id="missions" class="glass card"><h2>In the air and on the road</h2><div class="empty">Nothing under way</div></section>
+  <div id="feed" class="glass">
+    <nav class="tabs seg">
+      <button data-tab="log" class="on">Log</button><button data-tab="supply">Supply</button><button data-tab="graph">Graph</button>
     </nav>
     <div class="tab on" id="tab-log"><div id="log"></div></div>
     <div class="tab" id="tab-supply">
       <section id="stock"><h2>Launch-site stock</h2><div class="empty">Waiting for stock levels</div></section>
-      <section style="border-bottom:0">
+      <section>
         <h2>Resupply routes to launch sites</h2>
         <div id="chain"><div class="empty">Waiting for the supply chain</div></div>
         <div id="suggest"></div>
-        <div class="row" style="margin-top:10px"><select id="siteSel"></select><button class="crit" id="siteBtn">Destroy</button></div>
-        <div class="row"><button id="chainBtn">Show supply chain on map</button></div>
       </section>
     </div>
-    <div class="tab" id="tab-graph"><section id="queries" style="border-bottom:0"><h2>Graph queries (last request)</h2><div class="empty">None yet</div></section></div>
-    <div class="tab ctl" id="tab-controls">
-      <section>
-        <h2>Casualty</h2>
-        <div class="row"><select id="soldierSel"></select></div>
-        <div class="row"><button class="crit" data-sev="CRITICAL" style="flex:1">Critical</button><button class="wnd" data-sev="WOUNDED" style="flex:1">Wounded</button></div>
-      </section>
-      <section>
-        <h2>Medic low on stock</h2>
-        <div class="row"><select id="medicSel"></select></div>
-        <div class="row"><select id="itemSel"></select><input id="qty" type="number" min="1" value="2" aria-label="quantity"></div>
-        <div class="row"><select id="urgSel" aria-label="how soon"><option value="CRITICAL">Critical</option><option value="URGENT" selected>Urgent</option><option value="NON_URGENT">Non-urgent</option></select><button id="lowBtn" style="flex:1">Request restock</button></div>
-      </section>
-      <section style="border-bottom:0">
-        <h2>Drone shot down</h2>
-        <div class="row"><select id="droneSel"></select><button class="crit" id="lostBtn">Shot down</button></div>
-      </section>
-    </div>
-  </aside>
-</main>
+    <div class="tab" id="tab-graph"><section id="queries"><h2>Graph queries (last request)</h2><div class="empty">None yet</div></section></div>
+  </div>
+</aside>
+
+<div id="banner" title="click to dismiss"></div>
+<div id="toast" class="glass"></div>
+<div class="offline-note glass" id="offlineNote">Offline map: run scripts/fetch_tiles.py once online</div>
+<div class="legend glass">
+  <i style="background:var(--ok)"></i>OK<i style="background:var(--wounded)"></i>Wounded<i style="background:var(--critical)"></i>Critical<i style="background:var(--medic)"></i>Medic<i style="background:var(--depot);border-radius:3px"></i>Launch site<i style="background:var(--evac);border-radius:3px"></i>Hospital<i style="background:var(--block)"></i>Block
+</div>
+
 <script>
 // ---------------------------------------------------------------------------------------------
 // Config
@@ -246,8 +378,8 @@
 // HOOK: backend address. Served by the API -> same host. Opened from disk -> localhost:8000.
 const API = location.protocol === 'file:' ? 'http://localhost:8000' : location.origin;
 const WS_URL = API.replace(/^http/, 'ws') + '/ws';
-const STATUS_COLOUR = { OK: '#3fb950', WOUNDED: '#f0b429', CRITICAL: '#f85149', ADMITTED: '#f778ba' };  // TUNE: soldier colours
-const DRONE_COLOUR = { IDLE: '#8b949e', EN_ROUTE: '#39d0d8', RETURNING: '#d2a8ff', CHARGING: '#f0b429', LOST: '#f85149' };  // TUNE
+const STATUS_COLOUR = { OK: '#30d158', WOUNDED: '#ffd60a', CRITICAL: '#ff453a', ADMITTED: '#ff375f' };  // TUNE: soldier colours
+const DRONE_COLOUR = { IDLE: '#8e8e93', EN_ROUTE: '#64d2ff', RETURNING: '#bf5af2', CHARGING: '#ffd60a', LOST: '#ff453a' };  // TUNE
 const LATENCY_WINDOW = 20;   // TUNE: how many decisions the rolling average covers
 const BANNER_MS = 12000;     // TUNE: how long a no_dispatch banner stays up
 const LOG_MAX = 200;
@@ -273,7 +405,7 @@ let mode = 'connecting';
 // ---------------------------------------------------------------------------------------------
 // Map
 // ---------------------------------------------------------------------------------------------
-const map = L.map('map', { zoomControl: true, preferCanvas: false }).setView([47.685, 35.56], 12);  // DEMO: sector centre, Role 2 hospital in view
+const map = L.map('map', { zoomControl: false, preferCanvas: false }).setView([47.685, 35.56], 12);  // DEMO: sector centre, Role 2 hospital in view
 // HOOK: map background. Served by the backend -> its /tiles cache (offline once scripts/fetch_tiles.py
 // has run). Opened from disk -> a local tiles/ folder if there is one. Any tile that fails falls back
 // to CARTO directly; if that fails too we draw an offline grid backdrop instead of a black map.
@@ -321,11 +453,14 @@ const layers = {
   zones: L.layerGroup().addTo(map), depots: L.layerGroup().addTo(map), routes: L.layerGroup().addTo(map),
   personnel: L.layerGroup().addTo(map), drones: L.layerGroup().addTo(map), chain: L.layerGroup(),
   hospitals: L.layerGroup().addTo(map), evac: L.layerGroup().addTo(map), shipments: L.layerGroup().addTo(map),
+  trucks: L.layerGroup().addTo(map), blocks: L.layerGroup().addTo(map),
 };
 L.control.layers({ 'Satellite': satellite, 'Dark map': dark }, { 'Roads and tracks': roads, 'Place names': placeNames, 'Threat zones': layers.zones, 'Launch sites': layers.depots, 'Routes': layers.routes,
   'Personnel': layers.personnel, 'Drones': layers.drones, 'Hospitals and aid stations': layers.hospitals,
-  'Evacuations': layers.evac, 'Shipments on the way': layers.shipments, 'Supply chain (rear)': layers.chain },
-  { collapsed: true, position: 'topleft' }).addTo(map);
+  'Evacuations': layers.evac, 'Shipments on the way': layers.shipments, 'Supply trucks (sector)': layers.trucks,
+  'Road and rail blocks': layers.blocks, 'Supply chain (rear)': layers.chain },
+  { collapsed: true, position: 'bottomleft' }).addTo(map);
+L.control.zoom({ position: 'bottomleft' }).addTo(map);
 suggestLayer.addTo(map);
 
 // ---------------------------------------------------------------------------------------------
@@ -463,10 +598,10 @@ function loadSnapshot(data) {
   for (const k in routes) delete routes[k];
   const byId = arr => Object.fromEntries((arr || []).map(x => [x.id, x]));
   S = { units: byId(data.units), personnel: byId(data.personnel), drones: byId(data.drones),
-        depots: byId(data.depots), facilities: byId(data.facilities) };
+        depots: byId(data.depots), facilities: byId(data.facilities), links: data.supply_links || [] };
 
   for (const z of data.no_fly_zones || []) {
-    L.polygon(z.polygon, { color: '#f85149', weight: 2, fillColor: '#f85149', fillOpacity: .18, dashArray: '6 4' })
+    L.polygon(z.polygon, { color: '#ff453a', weight: 2, fillColor: '#ff453a', fillOpacity: .18, dashArray: '6 4' })
       .bindTooltip(z.name, { permanent: true, direction: 'center', className: 'lbl' }).addTo(layers.zones);
   }
   for (const d of Object.values(S.depots)) {
@@ -485,6 +620,7 @@ function loadSnapshot(data) {
     if (pts) L.polyline(pts, legStyle(l.mode, { color: '#d2a8ff', weight: 2, opacity: .6 }))
       .bindTooltip(`${l.mode} · ${l.lead_time_min} min`, { className: 'lbl' }).addTo(layers.chain);
   }
+  drawBlocks(blocks);
   for (const k in evacs) delete evacs[k];
   Object.values(S.facilities).filter(f => f.kind === 'HOSPITAL').forEach(drawHospital);
   for (const e of data.evacuations || []) drawEvac(e);
@@ -680,6 +816,8 @@ const handlers = {
     chainRoutes = Object.fromEntries(c.routes.map(r => [r.depot_id, r]));
     ROAD_LEGS = c.road_legs || ROAD_LEGS;
     siteStatus = c.status;
+    blocks = c.blocks || [];
+    drawBlocks(blocks, c.changed && c.changed.block && !c.changed.lifted ? c.changed.block.id : null);
     const nm = id => (S.facilities[id] || S.depots[id] || { name: id }).name;
     const hm = m => m >= 60 ? `${Math.floor(m / 60)} h ${String(Math.round(m % 60)).padStart(2, '0')} min` : `${Math.round(m)} min`;
     document.getElementById('chain').innerHTML = c.routes.map(r => {
@@ -695,7 +833,16 @@ const handlers = {
     updateSiteBtn();
     drawChainRoutes();
     renderSuggestions(c.suggestions || []);
-    if (c.changed && !['DEPLOYED', 'SETTING_UP', 'READY'].includes(c.changed.status)) {
+    if (c.changed && 'block' in c.changed) {
+      const b = c.changed.block || {}, what = b.kind === 'RAIL' ? 'Rail line cut' : 'Road blocked';
+      const lines = c.routes.filter(r => prev && prev[r.depot_id] && prev[r.depot_id].minutes !== r.minutes)
+        .map(r => r.path ? `${esc(nm(r.depot_id))} now ${hm(r.minutes)} via ${esc(nm(r.source_id))}` : `${esc(nm(r.depot_id))} cut off`);
+      if (c.changed.lifted) log(`<b>${what}</b> lifted: open to traffic again.`, 'deliv', c.changed.ms);
+      else {
+        log(`<b>${what}</b>${b.links && b.links.length ? ': ' + b.links.map(linkName).map(esc).join(', ') : ''}. Ground routes re-planned. ${lines.join('; ')}`, 'block', c.changed.ms);
+        toast(`${what}: trucks, ambulances and trains reroute (${c.changed.ms.toFixed(1)} ms)`);
+      }
+    } else if (c.changed && !['DEPLOYED', 'SETTING_UP', 'READY'].includes(c.changed.status)) {
       const f = nm(c.changed.facility_id), hit = c.changed.status === 'DESTROYED';
       const lines = c.routes.filter(r => prev && prev[r.depot_id] && prev[r.depot_id].minutes !== r.minutes)
         .map(r => r.path ? `${esc(nm(r.depot_id))} now ${hm(r.minutes)} via ${esc(nm(r.source_id))}` : `${esc(nm(r.depot_id))} cut off`);
@@ -798,10 +945,20 @@ const handlers = {
 
 function drawChainRoutes() {
   chainActive.clearLayers();
+  layers.trucks.clearLayers();
   const pos = id => S.facilities[id] || S.depots[id];
+  // In-sector truck legs of the live restock routes, along real roads (round threats and road blocks).
+  const seen = new Set();
+  for (const r of Object.values(chainRoutes || {})) for (const l of r.legs || []) {
+    const k = `${l.src_id}>${l.dst_id}`;
+    if (l.mode !== 'TRUCK' || !ROAD_LEGS[k] || seen.has(k)) continue;
+    seen.add(k);
+    L.polyline(ROAD_LEGS[k], { color: '#bf5af2', weight: 3, opacity: .75, lineCap: 'round' })
+      .bindTooltip(`Supply truck route · ${name(l.src_id)} → ${name(l.dst_id)}`, { className: 'lbl' }).addTo(layers.trucks);
+  }
   for (const r of Object.values(chainRoutes || {})) for (const l of r.legs || []) {
     const pts = legPoints(l.src_id, l.dst_id, l.mode, pos);
-    if (pts) L.polyline(pts, legStyle(l.mode, { color: '#3fb950', weight: 4, opacity: .9 })).addTo(chainActive);
+    if (pts) L.polyline(pts, legStyle(l.mode, { color: '#30d158', weight: 4, opacity: .9 })).addTo(chainActive);
   }
   for (const [id, st] of Object.entries(siteStatus)) if (st === 'DESTROYED' && S.facilities[id]) {
     const f = S.facilities[id];
@@ -1002,15 +1159,8 @@ document.querySelectorAll('[data-sev]').forEach(b => b.onclick = () =>
 document.getElementById('lowBtn').onclick = () => post('/events', { type: 'LOW_STOCK',
   subject_id: document.getElementById('medicSel').value,
   items: { [document.getElementById('itemSel').value]: +document.getElementById('qty').value || 1 },
-  urgency: document.getElementById('urgSel').value });
-// Report threat: arm, then the next map click reports a threat there (TUNE: radius).
-document.getElementById('threatBtn').onclick = () => { document.getElementById('mapwrap').classList.add('placing'); toast('Click the map where the threat is'); };
-map.on('click', e => {
-  const wrap = document.getElementById('mapwrap');
-  if (!wrap.classList.contains('placing')) return;
-  wrap.classList.remove('placing');
-  post('/threats', { name: 'Reported threat', lat: e.latlng.lat, lon: e.latlng.lng, radius_m: 800 });
-});
+  urgency: (document.querySelector('#urgSeg .on') || {}).dataset.urg || 'URGENT' });
+
 document.getElementById('siteSel').onchange = updateSiteBtn;
 document.getElementById('siteBtn').onclick = () => {
   const id = document.getElementById('siteSel').value;
@@ -1018,22 +1168,134 @@ document.getElementById('siteBtn').onclick = () => {
 };
 // Toggle between the tactical sector and the whole chain (Poland to the front).
 let sectorView = null;
-document.getElementById('chainBtn').onclick = e => {
-  if (!sectorView) {
+function setChainView(on) {
+  if (on === !!sectorView) return;
+  const btn = document.getElementById('chainBtn');
+  if (on) {
     sectorView = [map.getCenter(), map.getZoom()];
     map.addLayer(layers.chain); map.addLayer(chainActive);
     const pts = [...Object.values(S.facilities), ...Object.values(S.depots)].map(x => [x.lat, x.lon]);
-    map.fitBounds(pts, { padding: [40, 40] });
-    e.currentTarget.textContent = 'Back to the sector';
+    map.fitBounds(pts, { paddingTopLeft: [110, 100], paddingBottomRight: [document.getElementById('side').classList.contains('hidden') ? 40 : 480, 40] });
+    btn.textContent = 'Back to the sector';
   } else {
     map.setView(sectorView[0], sectorView[1]); sectorView = null;
     map.removeLayer(layers.chain); map.removeLayer(chainActive);
-    e.currentTarget.textContent = 'Show supply chain on map';
+    btn.textContent = 'Show supply chain on map';
   }
-};
+}
+document.getElementById('chainBtn').onclick = () => setChainView(!sectorView);
 document.getElementById('lostBtn').onclick = () => post('/losses', { drone_id: document.getElementById('droneSel').value });
 document.getElementById('demoBtn').onclick = () => { clearScreen(); post('/scenario/demo'); };   // DEMO
 document.getElementById('resetBtn').onclick = () => { clearScreen(); post('/reset'); };
+
+// ---------------------------------------------------------------------------------------------
+// Road and rail blocks (blocks.py): ground-only closures. Trucks, ambulances and trains reroute;
+// drones fly over. A road block closes the sector roads round the point it is placed on (and any
+// long-haul truck corridor under it); a rail block cuts the rail line tapped.
+// ---------------------------------------------------------------------------------------------
+let blocks = [];
+const PICK_PX = 22;  // TUNE: how close (screen pixels) a tap must be to a rail line or truck corridor
+const linkName = k => { const [ends, mode] = k.split('|'), [a, b] = ends.split('>');
+  return `${name(a).replace(/ \(.*\)/, '')} – ${name(b).replace(/ \(.*\)/, '')} ${(mode || '').toLowerCase()}`; };
+function drawBlocks(list, newId) {
+  layers.blocks.clearLayers();
+  const pos = id => S.facilities[id] || S.depots[id];
+  for (const b of list) {
+    if (b.kind === 'ROAD' && b.polygon.length)
+      L.polygon(b.polygon, { color: '#ff9f0a', weight: 2, fillColor: '#ff9f0a', fillOpacity: .22, interactive: false }).addTo(layers.blocks);
+    for (const k of b.links) {
+      const [ends, mode] = k.split('|'), [a, c] = ends.split('>'), pts = legPoints(a, c, mode, pos);
+      if (pts) L.polyline(pts, { color: b.kind === 'RAIL' ? '#ff453a' : '#ff9f0a', weight: 6, opacity: .85, dashArray: '2 10', lineCap: 'round', interactive: false }).addTo(layers.blocks);
+    }
+    const rail = b.kind === 'RAIL';
+    L.marker([b.lat, b.lon], { zIndexOffset: 1200, icon: L.divIcon({ className: '', iconSize: [28, 28], iconAnchor: [14, 14],
+      html: `<div class="blk ${rail ? 'rail' : ''} ${b.id === newId ? 'new' : ''}">${rail ? '✕' : '━'}</div>` }) })
+      .bindTooltip(rail ? 'Rail line cut' : 'Road blocked', { direction: 'top', offset: [0, -14], className: 'lbl' })
+      .bindPopup(`<b>${rail ? 'Rail line cut' : 'Road blocked'}</b>${b.links.length ? '<br>' + b.links.map(linkName).map(esc).join('<br>') : ''}<br><br><button class="small" onclick="liftBlock('${b.id}')">Lift block</button>`)
+      .addTo(layers.blocks);
+  }
+  const box = document.getElementById('blockList');
+  box.innerHTML = list.length ? list.map(b => `<div class="b"><span class="ic">${b.kind === 'RAIL' ? '🚆' : '⛔'}</span><span>${b.kind === 'RAIL' ? 'Rail line cut' : 'Road blocked'}
+      <small>${b.links.length ? esc(b.links.map(linkName).join(', ')) : `${b.lat.toFixed(3)}, ${b.lon.toFixed(3)}`}</small></span>
+      <button class="small" onclick="liftBlock('${b.id}')">Lift</button></div>`).join('') : '<div class="empty" style="padding:0 4px 8px">No blocks</div>';
+  const n = document.getElementById('blockCount'); n.textContent = list.length; n.style.display = list.length ? '' : 'none';
+  document.getElementById('liftAllBtn').style.display = list.length > 1 ? '' : 'none';
+}
+function liftBlock(id) { map.closePopup(); post('/blocks/lift', { id }); }
+document.getElementById('liftAllBtn').onclick = () => post('/blocks/lift', { all: true });
+// Supply links (both directions as one) whose drawn line passes within `px` of a screen point, nearest first.
+function linksNear(latlng, mode, px) {
+  const p = map.latLngToContainerPoint(latlng), pos = id => S.facilities[id] || S.depots[id], seen = new Set(), out = [];
+  for (const l of S.links || []) {
+    if (l.mode !== mode || seen.has(`${l.dst_id}>${l.src_id}`)) continue;
+    if (mode === 'TRUCK' && ROAD_LEGS[`${l.src_id}>${l.dst_id}`]) continue;  // in-sector legs: the road network handles them
+    seen.add(`${l.src_id}>${l.dst_id}`);
+    const pts = legPoints(l.src_id, l.dst_id, l.mode, pos); if (!pts) continue;
+    let d = Infinity;
+    for (let i = 1; i < pts.length; i++)
+      d = Math.min(d, L.LineUtil.pointToSegmentDistance(p, map.latLngToContainerPoint(pts[i - 1]), map.latLngToContainerPoint(pts[i])));
+    if (d <= px) out.push([d, `${l.src_id}>${l.dst_id}|${l.mode}`]);
+  }
+  return out.sort((a, b) => a[0] - b[0]).map(x => x[1]);
+}
+
+// Placing something on the map: arm, then the next tap places it. Esc cancels.
+let placing = null;
+const PLACE_HINT = { threat: 'Tap the map where the threat is', road: 'Tap the road to block',
+  rail: 'Tap a dashed rail line to cut it' };
+function arm(kind) {
+  placing = kind;
+  document.getElementById('mapwrap').classList.add('placing');
+  closeSheet();
+  document.querySelector(`#dock button[data-pane="${kind === 'threat' ? 'threat' : 'block'}"]`).classList.add('armed');
+  if (kind === 'rail') setChainView(true);
+  toast(PLACE_HINT[kind] + ' · Esc to cancel');
+}
+function disarm() {
+  placing = null;
+  document.getElementById('mapwrap').classList.remove('placing');
+  document.querySelectorAll('#dock button.armed').forEach(b => b.classList.remove('armed'));
+}
+document.getElementById('threatBtn').onclick = () => arm('threat');
+document.getElementById('roadBlockBtn').onclick = () => arm('road');
+document.getElementById('railBlockBtn').onclick = () => arm('rail');
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { disarm(); closeSheet(); } });
+map.on('click', e => {
+  if (!placing) { closeSheet(); return; }
+  const at = { lat: e.latlng.lat, lon: e.latlng.lng };
+  if (placing === 'threat') post('/threats', { name: 'Reported threat', ...at, radius_m: 800 });  // TUNE: radius
+  else if (placing === 'road') post('/blocks', { kind: 'ROAD', ...at, links: linksNear(e.latlng, 'TRUCK', PICK_PX) });
+  else {
+    const near = linksNear(e.latlng, 'RAIL', PICK_PX);
+    if (!near.length) { toast('No rail line there: tap on a dashed rail line'); return; }
+    post('/blocks', { kind: 'RAIL', ...at, links: [near[0]] });
+  }
+  disarm();
+});
+
+// Dock and sheet: the first layer picks a group, the second shows its controls.
+function openSheet(pane) {
+  document.querySelectorAll('#sheet .pane').forEach(p => p.classList.toggle('on', p.dataset.pane === pane));
+  document.querySelectorAll('#dock button').forEach(b => b.classList.toggle('on', b.dataset.pane === pane));
+  document.getElementById('sheet').classList.add('open');
+}
+function closeSheet() {
+  document.getElementById('sheet').classList.remove('open');
+  document.querySelectorAll('#dock button').forEach(b => b.classList.remove('on'));
+}
+document.querySelectorAll('#dock button').forEach(b => b.onclick = () => {
+  if (placing) disarm();
+  b.classList.contains('on') ? closeSheet() : openSheet(b.dataset.pane);
+});
+document.querySelectorAll('#sheet [data-close]').forEach(b => b.onclick = closeSheet);
+document.querySelectorAll('#urgSeg button').forEach(b => b.onclick = () =>
+  document.querySelectorAll('#urgSeg button').forEach(x => x.classList.toggle('on', x === b)));
+// Side column slides away for a bigger map.
+document.getElementById('sideToggle').onclick = e => {
+  const hidden = document.getElementById('side').classList.toggle('hidden');
+  e.currentTarget.textContent = hidden ? '‹' : '›';
+  e.currentTarget.classList.toggle('out', hidden);
+};
 
 if (window.MOCK_SNAPSHOT) loadSnapshot(window.MOCK_SNAPSHOT);  // draw something instantly, the socket replaces it
 connect();

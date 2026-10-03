@@ -35,6 +35,7 @@ from .dispatch import DispatchEngine
 from .flights import SIM_SPEED, FlightTracker, _Flight
 from .messages import admitted_msg, dispatch_msg, evac_update_msg, evacuation_msg, no_dispatch_msg, queue_msg
 from .models import Dispatch, Evacuation, Event, Facility, NoFlyZone, Person
+from .blocks import ground_zones
 from .roads import ROAD_KMH, net_for
 from .routing import Router, haversine_m
 from .stock import StockKeeper, _fmt
@@ -73,7 +74,7 @@ class EvacTracker:
         self.sim_speed = sim_speed
         self.clock = clock
         self.trips: dict[str, _Trip] = {}  # evac_id -> trip in progress
-        self.roads = net_for(self.repo.list_no_fly_zones())  # HOOK: rebuilt in reroute() when a threat appears
+        self.roads = net_for(ground_zones(self.repo))  # HOOK: rebuilt in reroute() when a threat or road block appears
         self._medic_cache: dict[str, set[str]] = {}  # soldier -> their squad's medic(s)
         self._ids = itertools.count(1)
 
@@ -225,10 +226,10 @@ class EvacTracker:
                 self.stock.message("treated", note, facility_id=f.id)]
 
     def reroute(self, zone: NoFlyZone) -> list[dict]:
-        """A new threat zone: casualties whose road ahead crosses it detour round it.
-        HOOK: dev_server.add_threat calls this after engine.zones_changed()."""
+        """A new threat zone or road block: casualties whose road ahead crosses it detour round it.
+        HOOK: dev_server.add_threat calls this after engine.zones_changed(); blocks.post_block for road blocks."""
         out, threat = [], Router([zone])
-        self.roads = net_for(self.repo.list_no_fly_zones())  # the zone is in the graph already: close its roads
+        self.roads = net_for(ground_zones(self.repo))  # the zone or block is in place already: close its roads
         for t in list(self.trips.values()):
             ahead = t.flight.remaining()
             if len(ahead) < 2 or all(threat.clear(ahead[i], ahead[i + 1]) for i in range(len(ahead) - 1)):

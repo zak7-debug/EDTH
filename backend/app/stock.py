@@ -217,6 +217,41 @@ class StockKeeper:
                 out += self._place(o.depot_id, o.items, replaces=o.order_id)
         return out
 
+    def links_closed(self, closed: set[str], why: str) -> list[dict]:
+        """A road or rail line was cut (blocks.py): shipments still to travel it are re-planned from
+        the last site they reached, round the cut. Nothing is lost; the time on the cut leg is.
+        HOOK: blocks.post_block calls this with every cut link key ("src>dst|MODE")."""
+        from .blocks import link_key, route_from  # late import: blocks imports supply-chain types only
+        now, out = self.clock(), []
+        facilities, depots, links = self.repo.list_facilities(), self.repo.list_depots(), self.repo.list_supply_links()
+        names = _names(facilities, depots)
+        for o in list(self.orders.values()):
+            if o.status != "IN_TRANSIT":
+                continue
+            done = o.elapsed_min(now, self.speed)
+            ahead = [leg for leg in o.legs if o._arrive_at[leg["dst_id"]] > done]
+            if not any(link_key(l["src_id"], l["dst_id"], l["mode"]) in closed for l in ahead):
+                continue
+            at = ahead[0]["src_id"]  # the last site it reached: it waits there for the new route
+            path = route_from(at, o.depot_id, facilities, depots, links)
+            o.status = "REROUTED" if path else "LOST"
+            o.lost_at = None if path else at
+            if path is None:
+                out.append(self.message("order_lost", f"Shipment to {names.get(o.depot_id, o.depot_id)} stuck at "
+                                                      f"{names.get(at, at)}: {why}, no way round. Re-sending",
+                                        depot_id=o.depot_id, order_id=o.order_id))
+                out += self._place(o.depot_id, o.items, replaces=o.order_id) if o.items else []
+                continue
+            new = RestockOrder(f"ord-{next(self._ids)}", o.depot_id, at, dict(o.items), path["path"], path["legs"],
+                               path["minutes"], now, replaces=o.order_id, kind=o.kind)
+            self.orders[new.order_id] = new
+            via = " → ".join(f"{names.get(n, n)} ({l['mode'].lower()})" for n, l in zip(new.path, new.legs))
+            out.append(self.message("order_rerouted", f"Shipment to {names.get(o.depot_id, o.depot_id)} rerouted "
+                                                      f"({why}): {via} → {names.get(o.depot_id, o.depot_id)}, "
+                                                      f"{new.minutes:.0f} min from {names.get(at, at)}",
+                                    depot_id=o.depot_id, order_id=new.order_id, replaces=o.order_id))
+        return out
+
     # ---------------------------------------------------------------------------------------
     # What the dashboard sees
     # ---------------------------------------------------------------------------------------
