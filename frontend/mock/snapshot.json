@@ -1,0 +1,707 @@
+{
+ "units": [
+  {
+   "id": "unit-1",
+   "callsign": "BADGER 1"
+  },
+  {
+   "id": "unit-2",
+   "callsign": "BADGER 2"
+  },
+  {
+   "id": "unit-3",
+   "callsign": "BADGER 3"
+  }
+ ],
+ "personnel": [
+  {
+   "id": "med-1",
+   "kind": "MEDIC",
+   "callsign": "BADGER 1-DOC",
+   "unit_id": "unit-1",
+   "lat": 47.638558,
+   "lon": 35.63715,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {
+    "tourniquet": 4,
+    "blood_oneg": 3,
+    "chest_seal": 3,
+    "hemostatic_gauze": 4,
+    "morphine_autoinjector": 4
+   },
+   "stock_threshold": {
+    "tourniquet": 2,
+    "blood_oneg": 2,
+    "chest_seal": 2,
+    "hemostatic_gauze": 2,
+    "morphine_autoinjector": 2
+   }
+  },
+  {
+   "id": "sol-01",
+   "kind": "SOLDIER",
+   "callsign": "BADGER 1-1",
+   "unit_id": "unit-1",
+   "lat": 47.6371,
+   "lon": 35.638339,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-02",
+   "kind": "SOLDIER",
+   "callsign": "BADGER 1-2",
+   "unit_id": "unit-1",
+   "lat": 47.638946,
+   "lon": 35.64106,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-03",
+   "kind": "SOLDIER",
+   "callsign": "BADGER 1-3",
+   "unit_id": "unit-1",
+   "lat": 47.639569,
+   "lon": 35.637522,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-04",
+   "kind": "SOLDIER",
+   "callsign": "BADGER 1-4",
+   "unit_id": "unit-1",
+   "lat": 47.637688,
+   "lon": 35.637179,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-05",
+   "kind": "SOLDIER",
+   "callsign": "BADGER 1-5",
+   "unit_id": "unit-1",
+   "lat": 47.636875,
+   "lon": 35.640032,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-06",
+   "kind": "SOLDIER",
+   "callsign": "BADGER 1-6",
+   "unit_id": "unit-1",
+   "lat": 47.636106,
+   "lon": 35.638193,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "med-2",
+   "kind": "MEDIC",
+   "callsign": "BADGER 2-DOC",
+   "unit_id": "unit-2",
+   "lat": 47.6226,
+   "lon": 35.60227,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {
+    "tourniquet": 3,
+    "blood_oneg": 1,
+    "chest_seal": 2,
+    "hemostatic_gauze": 3,
+    "morphine_autoinjector": 3
+   },
+   "stock_threshold": {
+    "tourniquet": 2,
+    "blood_oneg": 2,
+    "chest_seal": 2,
+    "hemostatic_gauze": 2,
+    "morphine_autoinjector": 2
+   }
+  },
+  {
+   "id": "sol-07",
+   "kind": "SOLDIER",
+   "callsign": "BADGER 2-1",
+   "unit_id": "unit-2",
+   "lat": 47.620882,
+   "lon": 35.602536,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-08",
+   "kind": "SOLDIER",
+   "callsign": "BADGER 2-2",
+   "unit_id": "unit-2",
+   "lat": 47.623238,
+   "lon": 35.599039,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-09",
+   "kind": "SOLDIER",
+   "callsign": "BADGER 2-3",
+   "unit_id": "unit-2",
+   "lat": 47.623223,
+   "lon": 35.603189,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-10",
+   "kind": "SOLDIER",
+   "callsign": "BADGER 2-4",
+   "unit_id": "unit-2",
+   "lat": 47.621361,
+   "lon": 35.599933,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-11",
+   "kind": "SOLDIER",
+   "callsign": "BADGER 2-5",
+   "unit_id": "unit-2",
+   "lat": 47.623829,
+   "lon": 35.60102,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-12",
+   "kind": "SOLDIER",
+   "callsign": "BADGER 2-6",
+   "unit_id": "unit-2",
+   "lat": 47.620371,
+   "lon": 35.59958,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "med-3",
+   "kind": "MEDIC",
+   "callsign": "BADGER 3-DOC",
+   "unit_id": "unit-3",
+   "lat": 47.60939,
+   "lon": 35.662622,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {
+    "tourniquet": 4,
+    "blood_oneg": 2,
+    "chest_seal": 3,
+    "hemostatic_gauze": 3,
+    "morphine_autoinjector": 2
+   },
+   "stock_threshold": {
+    "tourniquet": 2,
+    "blood_oneg": 2,
+    "chest_seal": 2,
+    "hemostatic_gauze": 2,
+    "morphine_autoinjector": 2
+   }
+  },
+  {
+   "id": "sol-13",
+   "kind": "SOLDIER",
+   "callsign": "BADGER 3-1",
+   "unit_id": "unit-3",
+   "lat": 47.609229,
+   "lon": 35.663378,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-14",
+   "kind": "SOLDIER",
+   "callsign": "BADGER 3-2",
+   "unit_id": "unit-3",
+   "lat": 47.608145,
+   "lon": 35.664839,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-15",
+   "kind": "SOLDIER",
+   "callsign": "BADGER 3-3",
+   "unit_id": "unit-3",
+   "lat": 47.607514,
+   "lon": 35.662312,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-16",
+   "kind": "SOLDIER",
+   "callsign": "BADGER 3-4",
+   "unit_id": "unit-3",
+   "lat": 47.609318,
+   "lon": 35.662711,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-17",
+   "kind": "SOLDIER",
+   "callsign": "BADGER 3-5",
+   "unit_id": "unit-3",
+   "lat": 47.609447,
+   "lon": 35.662464,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  }
+ ],
+ "drones": [
+  {
+   "id": "drn-01",
+   "callsign": "HAWK 1",
+   "depot_id": "dep-01",
+   "lat": 47.7,
+   "lon": 35.7,
+   "speed_mps": 25.0,
+   "range_m": 40000,
+   "max_range_m": 40000,
+   "capacity": 8,
+   "status": "IDLE",
+   "payload": {
+    "tourniquet": 2,
+    "blood_oneg": 2,
+    "hemostatic_gauze": 2,
+    "chest_seal": 2
+   },
+   "claimed_by": null
+  },
+  {
+   "id": "drn-02",
+   "callsign": "HAWK 2",
+   "depot_id": "dep-01",
+   "lat": 47.7,
+   "lon": 35.7,
+   "speed_mps": 25.0,
+   "range_m": 40000,
+   "max_range_m": 40000,
+   "capacity": 8,
+   "status": "IDLE",
+   "payload": {
+    "tourniquet": 2,
+    "blood_oneg": 4,
+    "hemostatic_gauze": 2
+   },
+   "claimed_by": null
+  },
+  {
+   "id": "drn-03",
+   "callsign": "HAWK 3",
+   "depot_id": "dep-01",
+   "lat": 47.7,
+   "lon": 35.7,
+   "speed_mps": 22.0,
+   "range_m": 35000,
+   "max_range_m": 35000,
+   "capacity": 6,
+   "status": "IDLE",
+   "payload": {
+    "tourniquet": 3,
+    "chest_seal": 3
+   },
+   "claimed_by": null
+  },
+  {
+   "id": "drn-04",
+   "callsign": "FALCON 1",
+   "depot_id": "dep-02",
+   "lat": 47.66,
+   "lon": 35.54,
+   "speed_mps": 28.0,
+   "range_m": 30000,
+   "max_range_m": 30000,
+   "capacity": 6,
+   "status": "IDLE",
+   "payload": {
+    "tourniquet": 2,
+    "blood_oneg": 2,
+    "hemostatic_gauze": 1,
+    "morphine_autoinjector": 1
+   },
+   "claimed_by": null
+  },
+  {
+   "id": "drn-05",
+   "callsign": "FALCON 2",
+   "depot_id": "dep-02",
+   "lat": 47.66,
+   "lon": 35.54,
+   "speed_mps": 28.0,
+   "range_m": 4000,
+   "max_range_m": 30000,
+   "capacity": 6,
+   "status": "IDLE",
+   "payload": {
+    "tourniquet": 2,
+    "blood_oneg": 2,
+    "hemostatic_gauze": 2
+   },
+   "claimed_by": null
+  },
+  {
+   "id": "drn-06",
+   "callsign": "FALCON 3",
+   "depot_id": "dep-02",
+   "lat": 47.66,
+   "lon": 35.54,
+   "speed_mps": 20.0,
+   "range_m": 25000,
+   "max_range_m": 25000,
+   "capacity": 6,
+   "status": "IDLE",
+   "payload": {
+    "chest_seal": 3,
+    "hemostatic_gauze": 3
+   },
+   "claimed_by": null
+  },
+  {
+   "id": "drn-07",
+   "callsign": "OWL 1",
+   "depot_id": "dep-03",
+   "lat": 47.735,
+   "lon": 35.48,
+   "speed_mps": 18.0,
+   "range_m": 45000,
+   "max_range_m": 45000,
+   "capacity": 10,
+   "status": "IDLE",
+   "payload": {
+    "tourniquet": 3,
+    "blood_oneg": 4,
+    "hemostatic_gauze": 3
+   },
+   "claimed_by": null
+  },
+  {
+   "id": "drn-08",
+   "callsign": "OWL 2",
+   "depot_id": "dep-03",
+   "lat": 47.735,
+   "lon": 35.48,
+   "speed_mps": 18.0,
+   "range_m": 10000,
+   "max_range_m": 45000,
+   "capacity": 10,
+   "status": "CHARGING",
+   "payload": {
+    "tourniquet": 2,
+    "blood_oneg": 2,
+    "chest_seal": 2,
+    "morphine_autoinjector": 2
+   },
+   "claimed_by": null
+  }
+ ],
+ "depots": [
+  {
+   "id": "dep-01",
+   "name": "Launch Site North",
+   "lat": 47.7,
+   "lon": 35.7,
+   "stock": {
+    "tourniquet": 20,
+    "blood_oneg": 12,
+    "chest_seal": 15,
+    "hemostatic_gauze": 20,
+    "morphine_autoinjector": 10
+   }
+  },
+  {
+   "id": "dep-02",
+   "name": "Launch Site West",
+   "lat": 47.66,
+   "lon": 35.54,
+   "stock": {
+    "tourniquet": 10,
+    "blood_oneg": 1,
+    "chest_seal": 8,
+    "hemostatic_gauze": 10,
+    "morphine_autoinjector": 6
+   }
+  },
+  {
+   "id": "dep-03",
+   "name": "Launch Site Rear",
+   "lat": 47.735,
+   "lon": 35.48,
+   "stock": {
+    "tourniquet": 12,
+    "blood_oneg": 6,
+    "chest_seal": 10,
+    "hemostatic_gauze": 12,
+    "morphine_autoinjector": 8
+   }
+  }
+ ],
+ "no_fly_zones": [
+  {
+   "id": "nfz-1",
+   "name": "EW jamming zone",
+   "polygon": [
+    [
+     47.69,
+     35.65
+    ],
+    [
+     47.688,
+     35.69
+    ],
+    [
+     47.668,
+     35.705
+    ],
+    [
+     47.648,
+     35.69
+    ],
+    [
+     47.65,
+     35.655
+    ],
+    [
+     47.67,
+     35.64
+    ]
+   ]
+  },
+  {
+   "id": "nfz-2",
+   "name": "Air-defence threat area",
+   "polygon": [
+    [
+     47.59,
+     35.555
+    ],
+    [
+     47.593,
+     35.585
+    ],
+    [
+     47.58,
+     35.592
+    ],
+    [
+     47.576,
+     35.562
+    ]
+   ]
+  }
+ ],
+ "facilities": [
+  {
+   "id": "sup-01",
+   "kind": "SUPPLIER",
+   "name": "International donor hub (Rzesz\u00f3w region, PL)",
+   "lat": 50.04,
+   "lon": 22.0,
+   "stock": {
+    "tourniquet": 2000,
+    "blood_oneg": 0,
+    "chest_seal": 1500,
+    "hemostatic_gauze": 2500,
+    "morphine_autoinjector": 800
+   },
+   "role": "",
+   "beds": 0
+  },
+  {
+   "id": "sup-02",
+   "kind": "SUPPLIER",
+   "name": "National blood service (Kyiv region)",
+   "lat": 50.45,
+   "lon": 30.52,
+   "stock": {
+    "blood_oneg": 400
+   },
+   "role": "",
+   "beds": 0
+  },
+  {
+   "id": "dc-03",
+   "kind": "DISTRIBUTION_CENTRE",
+   "name": "Western medical logistics hub (Lviv region)",
+   "lat": 49.84,
+   "lon": 24.03,
+   "stock": {
+    "tourniquet": 600,
+    "blood_oneg": 20,
+    "chest_seal": 400,
+    "hemostatic_gauze": 700,
+    "morphine_autoinjector": 250
+   },
+   "role": "",
+   "beds": 0
+  },
+  {
+   "id": "dc-01",
+   "kind": "DISTRIBUTION_CENTRE",
+   "name": "Eastern medical logistics hub (Dnipro region)",
+   "lat": 48.46,
+   "lon": 35.04,
+   "stock": {
+    "tourniquet": 150,
+    "blood_oneg": 40,
+    "chest_seal": 120,
+    "hemostatic_gauze": 150,
+    "morphine_autoinjector": 60
+   },
+   "role": "",
+   "beds": 0
+  },
+  {
+   "id": "dc-02",
+   "kind": "DISTRIBUTION_CENTRE",
+   "name": "Forward distribution point (Zaporizhzhia region)",
+   "lat": 47.84,
+   "lon": 35.14,
+   "stock": {
+    "tourniquet": 40,
+    "blood_oneg": 10,
+    "chest_seal": 30,
+    "hemostatic_gauze": 40,
+    "morphine_autoinjector": 20
+   },
+   "role": "",
+   "beds": 0
+  },
+  {
+   "id": "hos-01",
+   "kind": "HOSPITAL",
+   "name": "Role 2 field hospital (sector rear)",
+   "lat": 47.76,
+   "lon": 35.42,
+   "stock": {
+    "blood_oneg": 24,
+    "tourniquet": 10,
+    "hemostatic_gauze": 10
+   },
+   "role": "ROLE_2",
+   "beds": 20
+  },
+  {
+   "id": "hos-02",
+   "kind": "HOSPITAL",
+   "name": "Role 3 hospital (Dnipro region)",
+   "lat": 48.47,
+   "lon": 35.0,
+   "stock": {
+    "blood_oneg": 80,
+    "tourniquet": 20,
+    "chest_seal": 20,
+    "hemostatic_gauze": 30,
+    "morphine_autoinjector": 20
+   },
+   "role": "ROLE_3",
+   "beds": 150
+  }
+ ],
+ "supply_links": [
+  {
+   "src_id": "sup-01",
+   "dst_id": "dc-03",
+   "lead_time_min": 180,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "dc-03",
+   "dst_id": "dc-01",
+   "lead_time_min": 720,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "sup-02",
+   "dst_id": "hos-02",
+   "lead_time_min": 360,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "hos-02",
+   "dst_id": "dc-01",
+   "lead_time_min": 20,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "hos-02",
+   "dst_id": "hos-01",
+   "lead_time_min": 45,
+   "mode": "HELO"
+  },
+  {
+   "src_id": "dc-01",
+   "dst_id": "dc-02",
+   "lead_time_min": 90,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "dc-02",
+   "dst_id": "dep-01",
+   "lead_time_min": 60,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "dc-02",
+   "dst_id": "dep-02",
+   "lead_time_min": 50,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "dc-02",
+   "dst_id": "dep-03",
+   "lead_time_min": 40,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "hos-01",
+   "dst_id": "dep-03",
+   "lead_time_min": 15,
+   "mode": "TRUCK"
+  }
+ ],
+ "dispatches": []
+}
