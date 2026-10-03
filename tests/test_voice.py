@@ -69,3 +69,16 @@ def test_voice_endpoint_dispatches(monkeypatch):
             assert ws.receive_json()["type"] == "event"
         assert client.post("/voice/text", json={"text": "Badger one-two critical"}).json()["events"][0]["subject_id"] == "sol-02"
         assert client.post("/voice?clip=missing", content=b"").status_code == 503
+
+
+def test_speaker_callsign_in_ukrainian(monkeypatch):
+    """voice/pipeline.py --speaker: the device's own callsign stands in for the one the medic didn't say."""
+    monkeypatch.setenv("EDTH_REPO", "memory")
+    from backend.app import dev_server
+    dev_server.world = dev_server.World()
+    with TestClient(dev_server.app) as client:
+        body = {"text": "Закінчуються турнікети, потрібно три.", "speaker": "Борсук один, медик"}
+        r = client.post("/voice/text", json=body).json()
+        assert [(e["type"], e["subject_id"]) for e in r["events"]] == [("LOW_STOCK", "med-1")]
+        assert r["transcript"] == body["text"]  # shown as heard; the speaker isn't added to it
+        assert client.post("/voice/text", json={"text": body["text"]}).json()["events"] == []

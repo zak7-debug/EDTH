@@ -4,6 +4,7 @@
                               in frontend/audio/, whose .txt transcript is the fallback when speech
                               to text is unavailable.
     POST /voice/text          {"text": "...", "language": "uk"}: skip speech to text (tests, fallback)
+    Both take an optional `speaker`: the reporter's callsign, e.g. "Борсук один, медик" (voice/pipeline.py).
 
 Speech to text is faster-whisper, offline on CPU (`pip install -r requirements-voice.txt`, then
 `python scripts/fetch_whisper.py` once while online). If it isn't installed, the model is missing or
@@ -222,11 +223,14 @@ router = APIRouter()
 _ids = itertools.count(1)
 
 
-async def handle_transcript(text: str, language: Optional[str], stt: str, stt_ms: float) -> dict:
-    """Parse, broadcast the voice_report, then run each event through the normal pipeline."""
+async def handle_transcript(text: str, language: Optional[str], stt: str, stt_ms: float,
+                            speaker: Optional[str] = None) -> dict:
+    """Parse, broadcast the voice_report, then run each event through the normal pipeline.
+    speaker is the reporter's own callsign as they'd say it ("Борсук один, медик"), for a device that
+    knows who is holding it; it is read as if spoken first, so "I'm out of blood" finds their medic."""
     from . import dev_server  # late import: dev_server includes this router
     callsign_ids = {p.callsign: p.id for p in dev_server.world.repo.list_personnel()}
-    parsed = parse_report(text, callsign_ids)
+    parsed = parse_report(f"{speaker}. {text}" if speaker else text, callsign_ids)
     report_id = f"voice-{int(time.time())}-{next(_ids)}"
     for k, ev in enumerate(parsed.events, start=1):
         ev["event_id"] = f"{report_id}-{k}"  # becomes the dispatch's request_id
@@ -242,7 +246,8 @@ async def handle_transcript(text: str, language: Optional[str], stt: str, stt_ms
 
 
 @router.post("/voice")
-async def post_voice(request: Request, clip: Optional[str] = None, language: Optional[str] = None):
+async def post_voice(request: Request, clip: Optional[str] = None, language: Optional[str] = None,
+                     speaker: Optional[str] = None):
     audio = await request.body()
     start = time.perf_counter()
     try:
@@ -255,11 +260,11 @@ async def post_voice(request: Request, clip: Optional[str] = None, language: Opt
         if text is None:
             raise HTTPException(503, f"speech to text unavailable ({e}) and no transcript for clip {clip!r}")
     stt_ms = round((time.perf_counter() - start) * 1000, 1)
-    return await handle_transcript(text, lang, stt, stt_ms)
+    return await handle_transcript(text, lang, stt, stt_ms, speaker)
 
 
 @router.post("/voice/text")
 async def post_voice_text(body: dict):
     if not body.get("text"):
         raise HTTPException(422, "body needs text")
-    return await handle_transcript(body["text"], body.get("language"), "text", 0.0)
+    return await handle_transcript(body["text"], body.get("language"), "text", 0.0, body.get("speaker"))
