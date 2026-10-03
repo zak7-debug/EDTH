@@ -11,7 +11,7 @@ from .models import Dispatch, Event, NoDispatch
 from .repo import GraphRepo
 
 WS_TYPES = ("snapshot", "event", "dispatch", "no_dispatch", "drone_update", "delivered", "queue", "query_log", "zone_added", "reroute", "drone_lost", "supply_chain",
-            "stock_update", "evacuation", "evac_update", "admitted")
+            "stock_update", "evacuation", "evac_update", "admitted", "voice_report")
 
 
 def msg(type_: str, data: dict) -> dict:
@@ -130,3 +130,12 @@ def admitted_msg(evac, facility_name: str, kit_used: dict, kit_short: dict, beds
                             "facility_name": facility_name, "kit_used": kit_used, "kit_short": kit_short,
                             "beds_used": beds_used, "beds": beds})
 
+
+
+def voice_report_msg(report_id: str, transcript: str, language: Optional[str], english: str, events: list[dict],
+                     unparsed: list[str], stt: str, stt_ms: float, parse_ms: float) -> dict:
+    """A medic's radio report, heard and parsed (voice.py). Sent before the `event` / `dispatch`
+    messages it causes; each event's event_id is the request_id of its dispatch."""
+    return msg("voice_report", {"report_id": report_id, "transcript": transcript, "language": language,
+                                "english": english, "events": events, "unparsed": unparsed,
+                                "stt": stt, "stt_ms": stt_ms, "parse_ms": parse_ms})
