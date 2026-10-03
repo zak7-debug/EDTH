@@ -549,7 +549,8 @@ window.MOCK_SNAPSHOT = {
     "morphine_autoinjector": 800
    },
    "role": "",
-   "beds": 0
+   "beds": 0,
+   "status": "OPERATIONAL"
   },
   {
    "id": "sup-02",
@@ -561,7 +562,8 @@ window.MOCK_SNAPSHOT = {
     "blood_oneg": 400
    },
    "role": "",
-   "beds": 0
+   "beds": 0,
+   "status": "OPERATIONAL"
   },
   {
    "id": "dc-03",
@@ -577,7 +579,8 @@ window.MOCK_SNAPSHOT = {
     "morphine_autoinjector": 250
    },
    "role": "",
-   "beds": 0
+   "beds": 0,
+   "status": "OPERATIONAL"
   },
   {
    "id": "dc-01",
@@ -593,7 +596,8 @@ window.MOCK_SNAPSHOT = {
     "morphine_autoinjector": 60
    },
    "role": "",
-   "beds": 0
+   "beds": 0,
+   "status": "OPERATIONAL"
   },
   {
    "id": "dc-02",
@@ -609,7 +613,8 @@ window.MOCK_SNAPSHOT = {
     "morphine_autoinjector": 20
    },
    "role": "",
-   "beds": 0
+   "beds": 0,
+   "status": "OPERATIONAL"
   },
   {
    "id": "hos-01",
@@ -623,7 +628,8 @@ window.MOCK_SNAPSHOT = {
     "hemostatic_gauze": 10
    },
    "role": "ROLE_2",
-   "beds": 20
+   "beds": 20,
+   "status": "OPERATIONAL"
   },
   {
    "id": "hos-02",
@@ -639,7 +645,8 @@ window.MOCK_SNAPSHOT = {
     "morphine_autoinjector": 20
    },
    "role": "ROLE_3",
-   "beds": 150
+   "beds": 150,
+   "status": "OPERATIONAL"
   }
  ],
  "supply_links": [
@@ -702,6 +709,30 @@ window.MOCK_SNAPSHOT = {
    "dst_id": "dep-03",
    "lead_time_min": 15,
    "mode": "TRUCK"
+  },
+  {
+   "src_id": "dc-01",
+   "dst_id": "dep-01",
+   "lead_time_min": 150,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "dc-02",
+   "dst_id": "hos-01",
+   "lead_time_min": 30,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "dep-03",
+   "dst_id": "dep-01",
+   "lead_time_min": 25,
+   "mode": "DRONE"
+  },
+  {
+   "src_id": "dep-03",
+   "dst_id": "dep-02",
+   "lead_time_min": 20,
+   "mode": "DRONE"
   }
  ],
  "dispatches": []

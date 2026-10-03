@@ -33,6 +33,7 @@ from typing import Callable, Optional, Union
 from .models import Depot, Dispatch, Drone, Event, NoDispatch
 from .repo import GraphRepo
 from .routing import Router
+from .supply_chain import best_path
 
 Point = tuple[float, float]  # (lat, lon) in decimal degrees
 RouteFn = Callable[[Point, Point], tuple[list[Point], float]]  # (from, to) -> (waypoints, metres)
@@ -254,8 +255,7 @@ class DispatchEngine:
 
     def _nearest_alternative(self, items: dict[str, int], target: Point, drones: list[Drone]) -> Optional[dict]:
         """Fastest free drone that could fly to a launch site stocking `items`, reload, then deliver.
-        If no launch site has the stock, fall back to naming where a launch site gets restocked from
-        (one supply-chain graph query per launch site)."""
+        If no launch site has the stock, fall back to the fastest working supply chain to a launch site."""
         stocked = [d for d in self.repo.list_depots() if all(d.stock.get(i, 0) >= q for i, q in items.items())]
         best = None
         for drone in drones:
@@ -273,13 +273,16 @@ class DispatchEngine:
                             "note": f"{drone.callsign} can reach you in {eta / 60:.0f} min "
                                     f"after reloading at {dep.name}"}
         if best is None and items:
-            for dep in self.repo.list_depots():
-                sources = self.repo.find_resupply_sources(dep.id, items)  # 2-hop supply-chain query
-                if sources:
-                    fac, link = sources[0]  # fastest source first
-                    return {"drone_id": None, "eta_s": None, "via_depot": dep.id,
-                            "note": f"{dep.name} can be restocked from {fac.name} "
-                                    f"in {link.lead_time_min:.0f} min"}
+            # Nothing can fly it now: name the fastest working supply chain to any launch site,
+            # skipping destroyed hubs and hospitals (supply_chain.py).
+            facilities, depots, links = self.repo.list_facilities(), self.repo.list_depots(), self.repo.list_supply_links()
+            names = {**{f.id: f.name for f in facilities}, **{d.id: d.name for d in depots}}
+            paths = [p for p in (best_path(d.id, items, facilities, depots, links) for d in depots) if p]
+            if paths:
+                p = min(paths, key=lambda p: p["minutes"])
+                return {"drone_id": None, "eta_s": None, "via_depot": p["path"][-1],
+                        "note": f"{names[p['path'][-1]]} can be restocked from {names[p['source_id']]} "
+                                f"in {p['minutes']:.0f} min"}
         return best
 
     def _enqueue(self, event: Event, items: dict[str, int]) -> None:

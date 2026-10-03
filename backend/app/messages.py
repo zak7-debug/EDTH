@@ -10,7 +10,7 @@ from typing import Iterable, Optional
 from .models import Dispatch, Event, NoDispatch
 from .repo import GraphRepo
 
-WS_TYPES = ("snapshot", "event", "dispatch", "no_dispatch", "drone_update", "delivered", "queue", "query_log", "zone_added", "reroute", "drone_lost")
+WS_TYPES = ("snapshot", "event", "dispatch", "no_dispatch", "drone_update", "delivered", "queue", "query_log", "zone_added", "reroute", "drone_lost", "supply_chain")
 
 
 def msg(type_: str, data: dict) -> dict:
@@ -92,4 +92,10 @@ def drone_lost_msg(drone_id: str, lat: float, lon: float, phase: Optional[str], 
     return msg("drone_lost", {"drone_id": drone_id, "lat": lat, "lon": lon, "phase": phase,
                               "request_id": request_id, "recipient_id": recipient_id,
                               "items_lost": items_lost})
+
+
+def supply_chain_msg(chain: dict, changed: Optional[dict] = None) -> dict:
+    """Every launch site's current restock route (supply_chain.chain_status) and, after a site is
+    destroyed or restored, which one changed: {"facility_id", "status"}."""
+    return msg("supply_chain", {**chain, "changed": changed})
 

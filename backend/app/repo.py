@@ -41,6 +41,9 @@ class GraphRepo(Protocol):
         ...
     def list_facilities(self) -> list[Facility]: ...
     def list_supply_links(self) -> list[SupplyLink]: ...
+    def set_facility_status(self, facility_id: str, status: str) -> None:
+        """OPERATIONAL or DESTROYED. A destroyed site drops out of every supply path."""
+        ...
     def find_resupply_sources(self, depot_id: str, items: dict[str, int]) -> list[tuple[Facility, SupplyLink]]:
         """Upstream facilities that restock `depot_id` and hold enough of `items`, fastest first."""
         ...
@@ -132,6 +135,9 @@ class InMemoryRepo:
             if link.dst_id == depot_id and f and all(f.stock.get(i, 0) >= q for i, q in items.items()):
                 out.append((f, link))
         return sorted(out, key=lambda fl: fl[1].lead_time_min)
+
+    def set_facility_status(self, facility_id, status):
+        self.facilities[facility_id].status = status
 
     # Hot path for dispatch: must stay a single pass / single query.
     def find_candidate_drones(self, items):

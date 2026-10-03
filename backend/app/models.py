@@ -91,6 +91,7 @@ class Facility:
     stock: dict[str, int] = field(default_factory=dict)
     role: str = ""  # hospitals only
     beds: int = 0  # hospitals only
+    status: str = "OPERATIONAL"  # or "DESTROYED": the supply chain routes round it (supply_chain.py)
 
     def to_dict(self) -> dict:
         return asdict(self)
