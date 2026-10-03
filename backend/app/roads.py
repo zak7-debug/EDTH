@@ -44,6 +44,8 @@ ROADS_FILE = Path(__file__).resolve().parents[1] / "data" / "roads.json"
 KIND_KMH = {"motorway": 80.0, "trunk": 70.0, "primary": 60.0, "secondary": 50.0, "tertiary": 40.0,
             "unclassified": 30.0, "track": TRACK_KMH}
 ENTRY_SEARCH_M = 6_000  # how far from a road a site or squad may be and still drive off it
+STEP_M = 150  # TUNE: real roads get a junction every STEP_M, so a squad joins the road it is next to
+DIRECT_MAX_M = 1_000  # TUNE: only hops this short are driven straight across country
 
 
 def _jitter(i: int, j: int) -> tuple[float, float]:
@@ -210,6 +212,7 @@ class RealRoadNet:
         self.blocked = {frozenset((tuple(a), tuple(b))) for a, b in blocked_edges}  # HOOK: geo/ road blockages
         self.router = Router(self.zones)
         self.nodes: list[Point] = [tuple(p) for p in data["nodes"]]
+        self.n_real = len(self.nodes)  # nodes past this are the STEP_M points added along roads
         lats, lons = [p[0] for p in self.nodes], [p[1] for p in self.nodes]
         pad = 0.05
         self.bbox = (min(lats) - pad, min(lons) - pad, max(lats) + pad, max(lons) + pad)
@@ -227,9 +230,22 @@ class RealRoadNet:
                 if any(min(p[0], q[0]) <= n and max(p[0], q[0]) >= s and min(p[1], q[1]) <= e
                        and max(p[1], q[1]) >= w for s, w, n, e in boxes) and not self.router.clear(p, q):
                     continue
+                # OpenStreetMap draws a straight road with a node at each end only, so a squad 300 m from
+                # it would join it kilometres away: split it into points every STEP_M to join it alongside
                 m = haversine_m(p, q)
-                self.adj[a].append((b, m, m / mps))
-                self.adj[b].append((a, m, m / mps))
+                parts = max(1, math.ceil(m / STEP_M))
+                chain = [a]
+                for k in range(1, parts):
+                    f = k / parts
+                    self.nodes.append((p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f))
+                    self.adj.append([])
+                    chain.append(len(self.nodes) - 1)
+                chain.append(b)
+                for u, v in zip(chain, chain[1:]):
+                    if self.blocked and frozenset((self.nodes[u], self.nodes[v])) in self.blocked:
+                        continue  # geo/ snaps a spoken road block to one of these short pieces
+                    self.adj[u].append((v, m / parts, m / parts / mps))
+                    self.adj[v].append((u, m / parts, m / parts / mps))
         self.grid: dict[tuple[int, int], list[int]] = {}
         for i, p in enumerate(self.nodes):
             if self.adj[i]:
@@ -260,7 +276,22 @@ class RealRoadNet:
         return out
 
     def route(self, a: Point, b: Point) -> tuple[list[Point], float, float]:
-        return _dijkstra(self, a, b, lambda k: self.nodes[k])
+        pts, m, sec = _dijkstra(self, a, b, lambda k: self.nodes[k])
+        # the added points lie on straight road segments: keep only where the route joins and leaves
+        mid = set(self.nodes[self.n_real:])
+        keep = [p for i, p in enumerate(pts) if i in (0, 1, len(pts) - 2, len(pts) - 1) or p not in mid]
+        return keep, m, sec
+
+    def neighbours(self, i: int) -> set[int]:
+        """The road nodes joined to node i, skipping the points added along each road."""
+        out, todo, seen = set(), [i], {i}
+        while todo:
+            for k, _, _ in self.adj[todo.pop()]:
+                if k in seen:
+                    continue
+                seen.add(k)
+                (out.add(k) if k < self.n_real else todo.append(k))
+        return out
 
     def _offroad(self, a: Point, b: Point) -> tuple[list[Point], float, float]:
         pts, m = self.router.route(a, b)
@@ -273,7 +304,7 @@ def _dijkstra(net, a: Point, b: Point, point_of) -> tuple[list[Point], float, fl
     network or nothing connects."""
     direct_m = haversine_m(a, b)
     best_direct = None
-    if net.router.clear(a, b):  # very short hops: just drive across
+    if direct_m <= DIRECT_MAX_M and net.router.clear(a, b):  # very short hops: just drive across
         best_direct = ([a, b], direct_m, direct_m / (OFFROAD_KMH / 3.6))
     if not (net.covers(a) and net.covers(b)):
         return best_direct or net._offroad(a, b)

@@ -160,4 +160,4 @@ def test_road_blocked_on_real_roads(client, monkeypatch, tmp_path):
     assert ends == [1, 2]  # the road just north-east
     net = roads.net_for(dev.world.repo.list_no_fly_zones())
     assert isinstance(net, roads.RealRoadNet)
-    assert 2 not in [nk for nk, _, _ in net.adj[1]] and 0 in [nk for nk, _, _ in net.adj[1]]
+    assert 2 not in net.neighbours(1) and 0 in net.neighbours(1)

@@ -260,10 +260,24 @@ def test_real_roads_compile_and_route_round_zones(repo, tmp_path, monkeypatch):
     a, b = (47.622, 35.602), (47.76, 35.42)
     pts, metres, secs = net.route(a, b)
     on_road = {tuple(p) for p in data["nodes"]}
-    assert len(pts) > 10 and all(tuple(p) in on_road for p in pts[1:-1])  # every waypoint is on a road
+    assert len(pts) > 10 and all(tuple(p) in on_road for p in pts[2:-2])  # every waypoint is on a road
+    assert all(tuple(p) in set(net.nodes) for p in (pts[1], pts[-2]))  # joined and left along a road
     router = Router(zones)
     assert all(router.clear(pts[i], pts[i + 1]) for i in range(len(pts) - 1))
     legs = chain_status(repo)["road_legs"]
-    assert all(tuple(p) in {(round(x, 5), round(y, 5)) for x, y in on_road} for p in legs["dc-02>dep-02"][1:-1])
+    assert all(tuple(p) in {(round(x, 5), round(y, 5)) for x, y in on_road} for p in legs["dc-02>dep-02"][2:-2])
     monkeypatch.setenv("EDTH_ROADS", "grid")  # the invented lattice is still there as a fallback
     assert isinstance(roads.net_for(zones), roads.RoadNet)
+
+
+def test_real_roads_joined_alongside_not_at_the_far_end():
+    """OpenStreetMap gives a straight road two nodes: a squad beside its middle joins it there,
+    rather than driving cross-country to one end kilometres away."""
+    from backend.app import roads
+    from backend.app.routing import haversine_m
+    data = {"nodes": [[47.60, 35.50], [47.60, 35.60], [47.70, 35.60]], "ways": [["tertiary", [0, 1, 2]]]}
+    net = roads.RealRoadNet(data)
+    squad, dest = (47.603, 35.55), (47.70, 35.60)  # 330 m north of a 7.5 km road, 3.7 km from either end
+    pts, metres, secs = net.route(squad, dest)
+    assert haversine_m(squad, pts[1]) < 400 and (47.60, 35.60) in pts
+    assert roads._dijkstra(net, squad, (47.61, 35.56), net.nodes.__getitem__)[0] != [squad, (47.61, 35.56)]  # 1.3 km: by road
