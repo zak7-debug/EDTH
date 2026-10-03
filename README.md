@@ -25,7 +25,7 @@ python scripts/turingdb_smoke.py         # TuringDB timings
 backend/app/models.py      shared dataclasses: Person, Drone, Depot, Event, Dispatch, ...
 backend/app/repo.py        GraphRepo interface, InMemoryRepo, get_repo()
 backend/app/turing_repo.py TuringDB implementation
-backend/app/seed.py        Grafenwöhr world: suppliers, hospitals, distribution centres, 3 depots,
+backend/app/seed.py        South-east Ukraine sector (fictional laydown): suppliers, hospitals, hubs, 3 launch sites,
                            8 drones, 20 personnel, 2 no-fly zones
 backend/app/messages.py    WebSocket message builders
 backend/app/main.py        FastAPI app and /ws

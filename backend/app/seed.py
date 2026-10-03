@@ -1,20 +1,27 @@
-"""Seed data for both graphs, around Grafenwöhr Training Area (Bavaria, centre ~49.70 N, 11.93 E).
+"""Seed data for both graphs: a fictional brigade medical network in south-east Ukraine.
+
+Real geography, fictional military laydown. The sector sits in open farmland between
+Zaporizhzhia and Orikhiv (~47.65 N, 35.60 E); upstream nodes are placed at region level
+(Rzeszów region in Poland, Lviv, Kyiv, Dnipro, Zaporizhzhia). Every base, route, unit position
+and facility name here is invented for the demo. None of it is a real military site,
+a named real hospital, or a real supply route, and it must stay that way: publishing a
+plausible map of real Ukrainian medical logistics could help someone target it.
 
 Plain Python data so both repos (in-memory and TuringDB) load exactly the same world.
 `load_seed()` returns fresh copies every call, so tests and repos never share mutable state.
 
 The whole medical chain is modelled, rear to front:
-  2 suppliers (rear, ~60-80 km away) -> 2 distribution centres + 2 hospitals -> 3 depots
-  -> 8 drones -> 3 medics and 17 soldiers.
+  donor hub (PL) -> Lviv hub -> Dnipro hub -> Zaporizhzhia forward point -> 3 drone launch sites
+  -> 8 drones -> 3 medics and 17 soldiers, with a Kyiv blood service and two hospitals alongside.
 Upstream levels mostly matter for "no drone can serve this": the answer can then say which
-depot must reload a drone and where that depot gets restocked from.
+launch site must reload a drone and where that site gets restocked from.
 
 Layout, designed around the demo scenario:
-- 3 squads (20 personnel, one medic each) patrol west of the central impact area.
-- 3 depots: Main Post (north-east, the far side of the impact area), Range 301 (south-west)
-  and Vilseck LZ (far south-west).
-- 2 no-fly zones: the central impact area sits between Main Post and the squads, so drones
-  from Main Post must route around it; a small artillery firing point lies to the south.
+- 3 squads (20 personnel, one medic each) hold positions at the south of the sector.
+- 3 launch sites: North (behind an EW jamming zone), West, and Rear (by the Role 2 hospital).
+- 2 threat zones (stored as no-fly zones): an EW jamming zone sits between Launch Site North
+  and the squads, so drones from there must route around it; an air-defence threat area
+  lies further south-west.
 - 8 drones with deliberately uneven payloads: some lack blood, one has a low battery,
   one is charging. That gives the dispatch engine real choices and gives the demo a
   "no drone available" case once the blood carriers are busy.
@@ -27,7 +34,7 @@ from dataclasses import dataclass
 
 from .models import Depot, Drone, Facility, NoFlyZone, Person, SupplyLink, Unit
 
-CENTRE = (49.70, 11.93)
+CENTRE = (47.65, 35.60)
 
 
 @dataclass
@@ -47,11 +54,11 @@ UNITS = [
     Unit("unit-3", "BADGER 3"),
 ]
 
-# Squad patrol centres (lat, lon). All west of the impact area.
+# Squad positions (lat, lon), south of the EW jamming zone.
 _SQUAD_CENTRES = {
-    "unit-1": (49.705, 11.872),
-    "unit-2": (49.688, 11.858),
-    "unit-3": (49.672, 11.884),
+    "unit-1": (47.638, 35.640),
+    "unit-2": (47.622, 35.602),
+    "unit-3": (47.608, 35.662),
 }
 _SQUAD_SIZES = {"unit-1": 7, "unit-2": 7, "unit-3": 6}  # incl. one medic each -> 20 total
 
@@ -69,45 +76,48 @@ _MEDIC_STOCK = {
     "med-3": {"tourniquet": 4, "blood_oneg": 2, "chest_seal": 3, "hemostatic_gauze": 3, "morphine_autoinjector": 2},
 }
 
-# Depot stock is what drones reload from. Range 301 is short of blood on purpose.
+# Drone launch sites. Stock is what drones reload from. Launch Site West is short of blood on purpose.
 DEPOTS = [
-    Depot("dep-01", "Main Post", 49.7230, 11.9480,
+    Depot("dep-01", "Launch Site North", 47.7000, 35.7000,
           {"tourniquet": 20, "blood_oneg": 12, "chest_seal": 15, "hemostatic_gauze": 20, "morphine_autoinjector": 10}),
-    Depot("dep-02", "Range 301", 49.6610, 11.8400,
+    Depot("dep-02", "Launch Site West", 47.6600, 35.5400,
           {"tourniquet": 10, "blood_oneg": 1, "chest_seal": 8, "hemostatic_gauze": 10, "morphine_autoinjector": 6}),
-    Depot("dep-03", "Vilseck LZ", 49.6250, 11.8150,
+    Depot("dep-03", "Launch Site Rear", 47.7350, 35.4800,
           {"tourniquet": 12, "blood_oneg": 6, "chest_seal": 10, "hemostatic_gauze": 12, "morphine_autoinjector": 8}),
 ]
 
-# Upstream of the depots. Names are generic: this is simulated data.
+# Upstream of the launch sites, placed at region level (city-centre coordinates or open country).
+# Names are generic on purpose: no real depots, hospitals or routes.
 FACILITIES = [
-    Facility("sup-01", "SUPPLIER", "Central medical supply depot (Nuremberg area)", 49.4500, 11.0800,
-             {"tourniquet": 500, "blood_oneg": 0, "chest_seal": 400, "hemostatic_gauze": 600, "morphine_autoinjector": 300}),
-    Facility("sup-02", "SUPPLIER", "Regional blood service (Regensburg area)", 49.0200, 12.0900,
-             {"blood_oneg": 200}),
-    Facility("dc-01", "DISTRIBUTION_CENTRE", "Grafenwöhr medical logistics hub", 49.7120, 11.9680,
-             {"tourniquet": 80, "blood_oneg": 30, "chest_seal": 60, "hemostatic_gauze": 80, "morphine_autoinjector": 40}),
-    Facility("dc-02", "DISTRIBUTION_CENTRE", "Vilseck forward distribution point", 49.6080, 11.7950,
+    Facility("sup-01", "SUPPLIER", "International donor hub (Rzeszów region, PL)", 50.0400, 22.0000,
+             {"tourniquet": 2000, "blood_oneg": 0, "chest_seal": 1500, "hemostatic_gauze": 2500, "morphine_autoinjector": 800}),
+    Facility("sup-02", "SUPPLIER", "National blood service (Kyiv region)", 50.4500, 30.5200,
+             {"blood_oneg": 400}),
+    Facility("dc-03", "DISTRIBUTION_CENTRE", "Western medical logistics hub (Lviv region)", 49.8400, 24.0300,
+             {"tourniquet": 600, "blood_oneg": 20, "chest_seal": 400, "hemostatic_gauze": 700, "morphine_autoinjector": 250}),
+    Facility("dc-01", "DISTRIBUTION_CENTRE", "Eastern medical logistics hub (Dnipro region)", 48.4600, 35.0400,
+             {"tourniquet": 150, "blood_oneg": 40, "chest_seal": 120, "hemostatic_gauze": 150, "morphine_autoinjector": 60}),
+    Facility("dc-02", "DISTRIBUTION_CENTRE", "Forward distribution point (Zaporizhzhia region)", 47.8400, 35.1400,
              {"tourniquet": 40, "blood_oneg": 10, "chest_seal": 30, "hemostatic_gauze": 40, "morphine_autoinjector": 20}),
-    Facility("hos-01", "HOSPITAL", "Role 2 field hospital", 49.7310, 11.9620,
+    Facility("hos-01", "HOSPITAL", "Role 2 field hospital (sector rear)", 47.7600, 35.4200,
              {"blood_oneg": 24, "tourniquet": 10, "hemostatic_gauze": 10}, role="ROLE_2", beds=20),
-    Facility("hos-02", "HOSPITAL", "Role 3 hospital (Weiden area)", 49.6760, 12.1570,
-             {"blood_oneg": 60, "tourniquet": 20, "chest_seal": 20, "hemostatic_gauze": 30, "morphine_autoinjector": 20},
-             role="ROLE_3", beds=120),
+    Facility("hos-02", "HOSPITAL", "Role 3 hospital (Dnipro region)", 48.4700, 35.0000,
+             {"blood_oneg": 80, "tourniquet": 20, "chest_seal": 20, "hemostatic_gauze": 30, "morphine_autoinjector": 20},
+             role="ROLE_3", beds=150),
 ]
 
 # Who restocks whom, with transport lead time in minutes.
 SUPPLY_LINKS = [
-    SupplyLink("sup-01", "dc-01", 120, "TRUCK"),
-    SupplyLink("sup-01", "dc-02", 110, "TRUCK"),
-    SupplyLink("sup-02", "hos-02", 70, "TRUCK"),
-    SupplyLink("sup-02", "hos-01", 40, "HELO"),
-    SupplyLink("hos-02", "dc-01", 30, "TRUCK"),
-    SupplyLink("dc-01", "dep-01", 10, "TRUCK"),
-    SupplyLink("dc-01", "dep-02", 25, "TRUCK"),
-    SupplyLink("dc-02", "dep-02", 20, "TRUCK"),
-    SupplyLink("dc-02", "dep-03", 8, "TRUCK"),
-    SupplyLink("hos-01", "dep-01", 5, "TRUCK"),
+    SupplyLink("sup-01", "dc-03", 180, "TRUCK"),
+    SupplyLink("dc-03", "dc-01", 720, "TRUCK"),
+    SupplyLink("sup-02", "hos-02", 360, "TRUCK"),
+    SupplyLink("hos-02", "dc-01", 20, "TRUCK"),
+    SupplyLink("hos-02", "hos-01", 45, "HELO"),
+    SupplyLink("dc-01", "dc-02", 90, "TRUCK"),
+    SupplyLink("dc-02", "dep-01", 60, "TRUCK"),
+    SupplyLink("dc-02", "dep-02", 50, "TRUCK"),
+    SupplyLink("dc-02", "dep-03", 40, "TRUCK"),
+    SupplyLink("hos-01", "dep-03", 15, "TRUCK"),
 ]
 
 # (id, callsign, depot, speed m/s, range left m, max range m, capacity, status, payload)
@@ -130,13 +140,14 @@ _DRONES = [
      {"tourniquet": 2, "blood_oneg": 2, "chest_seal": 2, "morphine_autoinjector": 2}),
 ]
 
+# Threat zones, stored as no-fly zones: drones route around them.
 NO_FLY_ZONES = [
-    NoFlyZone("nfz-1", "Central impact area", [
-        (49.716, 11.893), (49.721, 11.925), (49.708, 11.945),
-        (49.690, 11.938), (49.686, 11.905), (49.700, 11.890),
+    NoFlyZone("nfz-1", "EW jamming zone", [
+        (47.690, 35.650), (47.688, 35.690), (47.668, 35.705),
+        (47.648, 35.690), (47.650, 35.655), (47.670, 35.640),
     ]),
-    NoFlyZone("nfz-2", "Artillery firing point", [
-        (49.652, 11.900), (49.656, 11.918), (49.646, 11.922), (49.642, 11.904),
+    NoFlyZone("nfz-2", "Air-defence threat area", [
+        (47.590, 35.555), (47.593, 35.585), (47.580, 35.592), (47.576, 35.562),
     ]),
 ]
 

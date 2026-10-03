@@ -68,10 +68,12 @@ Every write goes through `_write()`, which opens a change, runs the queries, com
 
 ## 5. Seed data (`backend/app/seed.py`)
 
-**What it does:** builds the same world for both repos around Grafenwöhr Training Area: 3 squads (20 people, one medic each), 3 depots, 8 drones and 2 no-fly zones. Positions are fixed (random jitter with a fixed seed), so every run and every test sees the same world.
+**What it does:** builds the same world for both repos in a sector of south-east Ukraine, between Zaporizhzhia and Orikhiv: 3 squads (20 people, one medic each), 3 drone launch sites (depots), 8 drones and 2 threat zones (stored as no-fly zones).
+
+**Real geography, fictional laydown.** Towns, regions and distances are real so the demo is plausible. Every base, route, unit position and facility is invented, and upstream nodes are placed only at region level. Keep it that way: a believable map of real Ukrainian medical logistics would be useful to whoever wants to target it. Positions are fixed (random jitter with a fixed seed), so every run and every test sees the same world.
 
 **Why the numbers are what they are (all chosen for the demo):**
-- The squads patrol west of the **central impact area** no-fly zone, and **Main Post** depot sits on its far side, so drones from Main Post must route around it. That's the reroute beat.
+- An **EW jamming zone** sits between **Launch Site North** and all three squads, so drones from there must route around it. That's the reroute beat.
 - Payloads are deliberately uneven: `drn-03` and `drn-06` carry no blood, `drn-05` has a nearly flat battery (only 4 km of range left), `drn-08` is charging. A CRITICAL casualty has five possible drones; once those are busy, the next one gets a clear "no drone" reason.
 - **`med-2` starts with 1 unit of blood against a threshold of 2**: the demo's low-stock event is already true in the data.
 
@@ -85,16 +87,16 @@ Every write goes through `_write()`, which opens a change, runs the queries, com
 Supplier (rear)  ──SUPPLIES──>  Distribution centre / Hospital  ──SUPPLIES──>  Depot  <──BASED_AT──  Drone  ──DISPATCHED_TO──>  Medic / Soldier
 ```
 
-Each level holds stock (`STOCKS {qty}` edges to the same `SupplyItem` nodes drones `CARRIES`), and each `SUPPLIES` link has a lead time and a transport mode. Seeded: 2 suppliers (Nuremberg and Regensburg areas), 2 distribution centres, a Role 2 field hospital near Main Post and a Role 3 hospital near Weiden, 10 links.
+Each level holds stock (`STOCKS {qty}` edges to the same `SupplyItem` nodes drones `CARRIES`), and each `SUPPLIES` link has a lead time and a transport mode. Seeded: an international donor hub in the Rzeszów region (Poland) feeding a Lviv-region hub, then a Dnipro-region hub, then a forward point in the Zaporizhzhia region, then the launch sites. Alongside are a Kyiv-region blood service, a Role 3 hospital in the Dnipro region and a Role 2 field hospital at the sector rear. That makes 10 links, with lead times from 12 hours (Lviv to Dnipro by truck) down to 15 minutes.
 
 **Why it matters for the final product:**
-- **The pitch:** one graph shows the whole chain from factory to wounded soldier. A question like "which facility can restock Range 301 with blood, and how fast?" is a single 2-hop query (`find_resupply_sources`), which is exactly what graph databases are good at.
-- **The "no drone available" answer gets better:** instead of only "nothing carries blood", the engine can say "drn-07 can serve after reloading at Range 301, restocked from Vilseck forward distribution point in 20 min".
+- **The pitch:** one graph shows the whole chain from factory to wounded soldier. A question like "which facility can restock Launch Site West with blood, and how fast?" is a single 2-hop query (`find_resupply_sources`), which is exactly what graph databases are good at.
+- **The "no drone available" answer gets better:** instead of only "nothing carries blood", the engine can say "drn-07 can serve after reloading at Launch Site Rear, restocked from the Role 2 field hospital in 15 min".
 - **Later:** hospitals are where casualties get evacuated to, so a CASEVAC extension has its destinations already.
 
 The real-time dispatch path is unchanged: drones still launch from depots, and the upstream levels are read only when explaining or planning resupply. That keeps the sub-second dispatch untouched.
 
-**To change:** the `FACILITIES` and `SUPPLY_LINKS` tables in `seed.py`. Range 301 (`dep-02`) is deliberately short of blood, and the field hospital holds no chest seals, so resupply answers differ by item.
+**To change:** the `FACILITIES` and `SUPPLY_LINKS` tables in `seed.py`. Launch Site West (`dep-02`) is deliberately short of blood, and the field hospital holds no chest seals, so resupply answers differ by item.
 
 ## 6. Event and WebSocket formats (`contracts/messages.md`, `backend/app/messages.py`)
 
