@@ -18,7 +18,6 @@ if [ "$EDTH_REPO" = "turing" ]; then
   trap 'turingdb stop >/dev/null 2>&1 || true' EXIT
 fi
 
-# TODO(Sasank): also start sim/simulator.py once it exists.
 echo "Dashboard: http://localhost:8000   TuringDB UI: http://localhost:8080"
 # HOOK: which API runs. The dev server is complete today; set EDTH_APP=backend.app.main:app once
 # Sasank's main.py has /events and /ws.

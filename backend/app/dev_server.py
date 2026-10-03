@@ -268,6 +268,7 @@ async def reset():
     await broadcast(snapshot(world.repo))
     await broadcast(supply_chain_msg(chain_status(world.repo)))
     await broadcast(world.stock.message())
+    await broadcast(queue_msg(world.engine.pending()))  # fix: panel kept the old list after a restart
     return {"ok": True}
 
 

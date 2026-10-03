@@ -73,14 +73,23 @@ def plan_scenario(client: httpx.Client, seed: int) -> None:
 
 
 def random_mode(client: httpx.Client, seed: int, duration: float, mean_gap: float) -> None:
+    """Fix: the server tracks each soldier's status (engine.record sets status=severity on a
+    CASUALTY), so re-hitting someone already WOUNDED/CRITICAL is unrealistic (sol-11 twice in one
+    run). Track status locally (seeded from /state, updated as we post) and only ever pick a
+    CASUALTY target who is still OK. If nobody is left OK, fall back to a LOW_STOCK event instead
+    of skipping the tick entirely, so a short --duration isn't wasted doing nothing."""
     rng = random.Random(seed)
     soldiers, medics = people(client)
+    status = {s["id"]: (s.get("status") or "OK") for s in soldiers}
     end = time.monotonic() + duration
     while time.monotonic() < end:
         time.sleep(rng.expovariate(1.0 / mean_gap))
-        if rng.random() < 0.7:
-            post(client, {"type": "CASUALTY", "subject_id": rng.choice(soldiers)["id"],
-                          "severity": rng.choice(["WOUNDED", "CRITICAL"])})
+        ok_soldiers = [s for s in soldiers if status.get(s["id"], "OK") == "OK"]
+        if ok_soldiers and rng.random() < 0.7:
+            subject = rng.choice(ok_soldiers)
+            severity = rng.choice(["WOUNDED", "CRITICAL"])
+            post(client, {"type": "CASUALTY", "subject_id": subject["id"], "severity": severity})
+            status[subject["id"]] = severity  # mirrors update_person(status=severity) server-side
         else:
             item = rng.choice(ITEMS)
             post(client, {"type": "LOW_STOCK", "subject_id": rng.choice(medics)["id"], "items": {item: 1}})
