@@ -1,7 +1,7 @@
 """Voice reports: radio audio (Ukrainian or English) -> transcript -> the same events as POST /events.
 
 Who reports what:
-- Medics (Ukrainian callsign, «Борсук один, медик»): casualties, restocks with an urgency, spoken zones,
+- Medics (Ukrainian callsign, «Альфа, медик один»): casualties, restocks with an urgency, spoken zones,
   and «Скільки до прибуття?» (how long until my drone arrives).
 - Drone pilots: «Яструб один збитий» (HAWK 1 shot down) -> DRONE_LOST; a threat seen from the drone
   («Сокіл два, ворожий дрон, вісімсот метрів на північ») -> a zone placed from the drone's position.
@@ -12,7 +12,7 @@ Every report gets a short read-back (`readback`: Ukrainian and English) that the
                               in frontend/audio/, whose .txt transcript is the fallback when speech
                               to text is unavailable.
     POST /voice/text          {"text": "...", "language": "uk"}: skip speech to text (tests, fallback)
-    Both take an optional `speaker`: the reporter's callsign, e.g. "Борсук один, медик" (voice/pipeline.py),
+    Both take an optional `speaker`: the reporter's callsign, e.g. "Альфа, медик один" (voice/pipeline.py),
     and optional `lat` / `lon`: the device's position, which places a truck driver's road or threat report.
 
 Speech to text is faster-whisper, offline on CPU (`pip install -r requirements-voice.txt`, then
@@ -47,7 +47,7 @@ WHISPER_MODEL = os.environ.get("EDTH_WHISPER_MODEL", "small")  # TUNE: "base" if
 # ---- vocabulary -----------------------------------------------------------------------------------
 
 NUMBERS = {
-    # Ukrainian: cardinals with the case forms a medic would say, and ordinals ("Борсук другий")
+    # Ukrainian: cardinals with the case forms a medic would say, and ordinals ("Альфа, медик другий")
     "один": 1, "одна": 1, "одну": 1, "одного": 1, "одне": 1, "перший": 1, "першого": 1, "перша": 1,
     "два": 2, "дві": 2, "двох": 2, "другий": 2, "другого": 2, "друга": 2,
     "три": 3, "трьох": 3, "третій": 3, "третього": 3, "третя": 3,
@@ -60,7 +60,11 @@ NUMBERS = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
     "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "nine": 9, "ten": 10,
 }
-CALLSIGN_STEMS = {"борсук": "BADGER", "барсук": "BADGER", "badger": "BADGER", "borsuk": "BADGER"}  # DEMO: the seed's invented squad names
+# DEMO: the seed's four teams, as said in Ukrainian (with case forms by stem) and English.
+CALLSIGN_STEMS = {"альф": "ALPHA", "alpha": "ALPHA", "alfa": "ALPHA", "чарл": "CHARLIE", "charlie": "CHARLIE",
+                  "дельт": "DELTA", "delta": "DELTA", "ехо": "ECHO", "эхо": "ECHO", "echo": "ECHO"}
+TEAM_UK = {"ALPHA": "Альфа", "CHARLIE": "Чарлі", "DELTA": "Дельта", "ECHO": "Ехо"}
+MEDICS_PER_TEAM = 2
 MEDIC_STEMS = ("медик", "лікар", "санінструктор", "medic", "doc")
 
 # Order matters: CRITICAL is checked first, so "важко поранений" (badly wounded) is CRITICAL.
@@ -137,23 +141,39 @@ def _number(tok: str) -> Optional[int]:
 
 
 def _callsigns(toks: list[str]) -> list[tuple[int, str]]:
-    """(token index, callsign) for each callsign spoken: "BADGER 2-4" or "BADGER 2-DOC"."""
+    """(token index, callsign) for each callsign spoken: a soldier «Альфа три» -> "ALPHA-3", a medic
+    «Альфа, медик два» or «Альфа два, медик» -> "ALPHA-MED2" («Альфа, медик» alone is the first medic),
+    or a team on its own «Альфа» -> "ALPHA" (who is speaking)."""
     found = []
     for i, t in enumerate(toks):
         name = next((v for k, v in CALLSIGN_STEMS.items() if t.startswith(k)), None)
-        if name is None or i + 1 >= len(toks) or _number(toks[i + 1]) is None:
+        if name is None:
             continue
-        unit = _number(toks[i + 1])
-        nxt = toks[i + 2] if i + 2 < len(toks) else ""
-        if re.fullmatch(r"[1-9]{2}", toks[i + 1]) and _number(nxt) is None:  # Whisper writes "Борсук 32" for три-два
-            unit, nxt = int(toks[i + 1][0]), toks[i + 1][1]
-        if _number(nxt) is not None:
-            found.append((i, f"{name} {unit}-{_number(nxt)}"))
-        elif nxt.startswith(MEDIC_STEMS):
-            found.append((i, f"{name} {unit}-DOC"))
+        nxt = toks[i + 1] if i + 1 < len(toks) else ""
+        after = toks[i + 2] if i + 2 < len(toks) else ""
+        if nxt.startswith(MEDIC_STEMS):
+            k = _number(after)
+            found.append((i, f"{name}-MED{k if k and k <= MEDICS_PER_TEAM else 1}"))
+        elif _number(nxt) is not None and after.startswith(MEDIC_STEMS) and _number(nxt) <= MEDICS_PER_TEAM:
+            found.append((i, f"{name}-MED{_number(nxt)}"))
+        elif _number(nxt) is not None:
+            found.append((i, f"{name}-{_number(nxt)}"))
         else:
-            found.append((i, f"{name} {unit}"))  # a squad on its own: who is speaking
+            found.append((i, name))
     return found
+
+
+def _is_medic(cs: str) -> bool:
+    return "-MED" in cs
+
+
+def _team(cs: Optional[str]) -> str:
+    return (cs or "").split("-")[0]
+
+
+def _team_medic(team: str, speaker: Optional[str]) -> str:
+    """Who gets a team's supplies: the speaker if they are that team's medic, else its first medic."""
+    return speaker if speaker and _is_medic(speaker) and _team(speaker) == team else f"{team}-MED1"
 
 
 def _is_item(tok: str) -> Optional[str]:
@@ -249,10 +269,10 @@ def parse_report(text: str, callsign_ids: dict[str, str],
                  position: Optional[tuple[float, float]] = None,
                  drones: Optional[dict[str, tuple[str, tuple[float, float]]]] = None,
                  unhurt: Optional[list[str]] = None, lost_drones: frozenset = frozenset()) -> ParsedReport:
-    """Turn one radio report into partial events. callsign_ids maps "BADGER 2-4" -> "sol-10";
+    """Turn one radio report into partial events. callsign_ids maps "CHARLIE-4" -> "sol-10";
     drones maps "HAWK 1" -> ("drn-01", (lat, lon)); position is the reporter's device (a driver).
 
-    The squad named first without a soldier number ("Борсук два, медик") is the speaker; their
+    The squad named first without a soldier number ("Чарлі, медик") is the speaker; their
     medic is the subject of any low-stock request. A soldier's callsign plus a severity word is a
     casualty; supplies asked for in the same sentence are a restock for that soldier's squad medic,
     because drones deliver to medics only. A sentence with supplies and a "need / running out" word is
@@ -294,7 +314,7 @@ def parse_report(text: str, callsign_ids: dict[str, str],
         calls = _callsigns(toks)
         for _, cs in calls:
             if speaker is None and not re.search(r"-\d+$", cs):
-                speaker = cs if cs.endswith("-DOC") else f"{cs}-DOC"
+                speaker = cs if _is_medic(cs) else f"{cs}-MED1"
         soldiers = [cs for _, cs in calls if re.search(r"-\d+$", cs)]
         severity = next((sev for sev, stems in SEVERITY_STEMS.items()
                          if any(t.startswith(stems) for t in sev_toks)), None)
@@ -322,22 +342,22 @@ def parse_report(text: str, callsign_ids: dict[str, str],
             else:
                 out.events.append({"type": "CASUALTY", "subject_id": pid, "severity": severity, "callsign": cs})
                 report_critical = report_critical or severity == "CRITICAL"
-                casualty_medic = cs.rsplit("-", 1)[0] + "-DOC"
+                casualty_medic = _team_medic(_team(cs), speaker)
                 if items and needs:  # the squad medic treats them, so the medic gets the supplies
-                    restock(cs.rsplit("-", 1)[0] + "-DOC", items,
+                    restock(casualty_medic, items,
                             "CRITICAL" if severity == "CRITICAL" else urgency or "URGENT", sentence)
         if severity and not soldiers and not any(t in DIST_UNITS for t in toks):
             # "Один поранений, важкий": no soldier named, so the next unhurt soldier(s) of the speaker's squad
-            # A squad named here ("Борсук два, поранений") is the casualty's, even if someone else is speaking
-            named = next((cs for _, cs in calls if not cs.endswith("-DOC")), None)
-            squad = named or (speaker or "").removesuffix("-DOC")
-            in_callsign = {j for i, _ in calls for j in (i + 1, i + 2)}  # "два" in "Борсук два" is not a count
+            # A squad named here ("Чарлі, поранений") is the casualty's, even if someone else is speaking
+            named = next((cs for _, cs in calls if not _is_medic(cs)), None)
+            squad = named or _team(speaker)
+            in_callsign = {j for i, _ in calls for j in (i + 1, i + 2)}  # "два" in "Чарлі два" is not a count
             at = next(i for i, t in enumerate(sev_toks) if t.startswith(SEVERITY_STEMS["CRITICAL"] + SEVERITY_STEMS["WOUNDED"]))
             count = next((_number(sev_toks[j]) for j in range(at - 1, max(-1, at - 4), -1)
                           if j not in in_callsign and _number(sev_toks[j])), 1)
             picks = [cs for cs in unhurt if squad and cs.startswith(f"{squad}-")][:min(count, 5)]
             if not picks:
-                out.unparsed.append(f"casualty heard but not which soldier: say their callsign, e.g. «Борсук три-два, "
+                out.unparsed.append(f"casualty heard but not which soldier: say their callsign, e.g. «Дельта два, "
                                     f"важкий» ({sentence})")
             for cs in picks:
                 unhurt.remove(cs)
@@ -346,12 +366,12 @@ def parse_report(text: str, callsign_ids: dict[str, str],
                 out.events.append({"type": "CASUALTY", "subject_id": callsign_ids[cs], "severity": severity,
                                    "callsign": cs})
                 report_critical = report_critical or severity == "CRITICAL"
-                casualty_medic = cs.rsplit("-", 1)[0] + "-DOC"
+                casualty_medic = _team_medic(squad, speaker)
             if picks and items and needs:
-                restock(f"{squad}-DOC", items, "CRITICAL" if severity == "CRITICAL" else urgency or "URGENT", sentence)
+                restock(_team_medic(squad, speaker), items, "CRITICAL" if severity == "CRITICAL" else urgency or "URGENT", sentence)
         if items and needs and not soldiers:
-            # the medic named here ("Борсук один, ... потрібно"), else the last casualty's, else who is speaking
-            named = next((cs if cs.endswith("-DOC") else f"{cs}-DOC" for _, cs in calls), None)
+            # the medic named here ("Альфа, медик один ... потрібно"), else the last casualty's, else who is speaking
+            named = next((cs if _is_medic(cs) else _team_medic(_team(cs), speaker) for _, cs in calls), None)
             medic = named or casualty_medic or speaker
             restock(medic, items, urgency, sentence)
     for ev in out.events:  # unless said otherwise, running short while treating a CRITICAL casualty is CRITICAL
@@ -442,8 +462,8 @@ def decode_audio(audio: bytes):
 SPOKEN = ("uk", "en")  # the languages the parser reads
 EN_SURE = 0.8  # TUNE: how sure Whisper must be that a call is English before it is not read as Ukrainian
 # Whisper spells unusual words better when it has seen them: the callsigns and kit names, no full report.
-PROMPT = {"uk": "Борсук, Яструб, Сокіл, Сова. Медик, водій, пілот. Турнікети, гемостатики, кров.",
-          "en": "Badger, Hawk, Falcon, Owl. Medic, driver, pilot. Tourniquets, gauze, blood."}
+PROMPT = {"uk": "Альфа, Чарлі, Дельта, Ехо. Яструб, Сокіл, Сова. Медик, водій, пілот. Турнікети, гемостатики, кров.",
+          "en": "Alpha, Charlie, Delta, Echo. Hawk, Falcon, Owl. Medic, driver, pilot. Tourniquets, gauze, blood."}
 
 
 def transcribe(audio: bytes, language: Optional[str] = None) -> tuple[str, str]:
@@ -479,7 +499,7 @@ _ids = itertools.count(1)
 async def handle_transcript(text: str, language: Optional[str], stt: str, stt_ms: float,
                             speaker: Optional[str] = None, position: Optional[tuple[float, float]] = None) -> dict:
     """Parse, broadcast the voice_report, then run each event through the normal pipeline.
-    speaker is the reporter's own callsign as they'd say it ("Борсук один, медик"), for a device that
+    speaker is the reporter's own callsign as they'd say it ("Альфа, медик один"), for a device that
     knows who is holding it; it is read as if spoken first, so "I'm out of blood" finds their medic."""
     from . import dev_server  # late import: dev_server includes this router
     world = dev_server.world
@@ -528,10 +548,12 @@ def _drone_uk(callsign: str) -> str:
 
 
 def _person_uk(callsign: str) -> str:
-    """"BADGER 3-2" -> "Борсук 3-2", so the Ukrainian read-back says the callsign the medic used."""
-    uk = {v: k.capitalize() for k, v in CALLSIGN_STEMS.items() if not k.isascii()}
-    name, _, rest = callsign.partition(" ")
-    return f"{uk.get(name, name)} {rest}".strip()
+    """"DELTA-2" -> "Дельта 2", "DELTA-MED1" -> "Дельта, медик 1": the callsign as the medic says it."""
+    team, _, rest = callsign.partition("-")
+    name = TEAM_UK.get(team, team)
+    if rest.startswith("MED"):
+        return f"{name}, медик {rest[3:]}"
+    return f"{name} {rest}".strip()
 
 
 def eta_answer(world, medic_id: Optional[str]) -> dict:

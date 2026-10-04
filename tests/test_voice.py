@@ -1,4 +1,5 @@
 """Medic voice reports (voice.py): Ukrainian and English transcripts become the usual events."""
+import re
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -16,36 +17,36 @@ def _clip(name):
 
 
 def test_ukrainian_casualty_and_low_blood():
-    r = parse_report(_clip("badger3-critical-uk"), _ids())
+    r = parse_report(_clip("delta-critical-uk"), _ids())
     assert [(e["type"], e["subject_id"]) for e in r.events] == [("CASUALTY", "sol-14"), ("LOW_STOCK", "med-3")]
     assert r.events[0]["severity"] == "CRITICAL" and "items" not in r.events[0]  # bleeding is not a blood request
     assert r.events[1]["items"] == {"blood_oneg": 2}
     assert r.events[1]["urgency"] == "CRITICAL"  # running out while treating a CRITICAL casualty
     assert not r.unparsed and r.parse_ms < 5
-    assert r.english == "BADGER 3-2 is CRITICAL. BADGER 3-DOC is running low: needs 2 x blood (O-neg) (critical)."
+    assert r.english == "DELTA-2 is CRITICAL. DELTA-MED1 is running low: needs 2 x blood (O-neg) (critical)."
 
 
 def test_ukrainian_low_stock_quantities_before_and_after():
-    r = parse_report(_clip("badger1-stock-uk"), _ids())
-    assert r.events == [{"type": "LOW_STOCK", "subject_id": "med-1", "callsign": "BADGER 1-DOC",
+    r = parse_report(_clip("alpha-stock-uk"), _ids())
+    assert r.events == [{"type": "LOW_STOCK", "subject_id": "med-1", "callsign": "ALPHA-MED1",
                          "items": {"tourniquet": 3, "hemostatic_gauze": 2}, "urgency": "URGENT"}]
 
 
 def test_english_wounded():
-    r = parse_report(_clip("badger1-wounded-en"), _ids())
-    assert r.events == [{"type": "CASUALTY", "subject_id": "sol-04", "severity": "WOUNDED", "callsign": "BADGER 1-4"}]
+    r = parse_report(_clip("alpha-wounded-en"), _ids())
+    assert r.events == [{"type": "CASUALTY", "subject_id": "sol-04", "severity": "WOUNDED", "callsign": "ALPHA-4"}]
 
 
 def test_whisper_style_variants():
     """Whisper writes numbers as digits, drops punctuation and uses other case endings."""
-    r = parse_report("Борсук 2 медик борсука 2-5 тяжко поранений", _ids())
+    r = parse_report("Чарлі медик. Чарлі 5 тяжко поранений", _ids())
     assert [(e["subject_id"], e["severity"]) for e in r.events] == [("sol-11", "CRITICAL")]
 
 
 def test_unresolved_parts_are_reported_not_dispatched():
-    r = parse_report("Борсук дев'ять. Борсук два-три поранений. Борсук два-два на зв'язку.", _ids())
+    r = parse_report("Чарлі три поранений. Чарлі два на зв'язку.", _ids())
     assert [e["subject_id"] for e in r.events] == ["sol-09"]
-    assert r.unparsed == ["BADGER 2-2: no severity heard (critical / wounded)"]
+    assert r.unparsed == ["CHARLIE-2: no severity heard (critical / wounded)"]
     assert parse_report("Потрібна кров.", _ids()).unparsed[0].startswith("supplies requested but no medic")
     assert parse_report("Перевірка зв'язку.", _ids()).unparsed == ["no casualty, supply request, zone or lost drone heard"]
 
@@ -59,16 +60,16 @@ def test_voice_endpoint_dispatches(monkeypatch):
             for _ in range(4):  # snapshot, queue, supply_chain, stock_update
                 ws.receive_json()
             # No faster-whisper in CI: the scripted clip's transcript stands in for speech to text.
-            r = client.post("/voice?clip=badger3-critical-uk", content=b"not really audio")
+            r = client.post("/voice?clip=delta-critical-uk", content=b"not really audio")
             assert r.status_code == 200
             body = r.json()
             assert body["stt"] in ("cached", "whisper")
             assert [e["type"] for e in body["events"]] == ["CASUALTY", "LOW_STOCK"]
             assert all(res.get("request_id") for res in body["results"])
             first = ws.receive_json()
-            assert first["type"] == "voice_report" and first["data"]["english"].startswith("BADGER 3-2")
+            assert first["type"] == "voice_report" and first["data"]["english"].startswith("DELTA-2")
             assert ws.receive_json()["type"] == "event"
-        assert client.post("/voice/text", json={"text": "Badger one-two critical"}).json()["events"][0]["subject_id"] == "sol-02"
+        assert client.post("/voice/text", json={"text": "Alpha two critical"}).json()["events"][0]["subject_id"] == "sol-02"
         assert client.post("/voice?clip=missing", content=b"").status_code == 503
 
 
@@ -78,7 +79,7 @@ def test_speaker_callsign_in_ukrainian(monkeypatch):
     from backend.app import dev_server
     dev_server.world = dev_server.World()
     with TestClient(dev_server.app) as client:
-        body = {"text": "Закінчуються турнікети, потрібно три.", "speaker": "Борсук один, медик"}
+        body = {"text": "Закінчуються турнікети, потрібно три.", "speaker": "Альфа, медик один"}
         r = client.post("/voice/text", json=body).json()
         assert [(e["type"], e["subject_id"]) for e in r["events"]] == [("LOW_STOCK", "med-1")]
         assert r["transcript"] == body["text"]  # shown as heard; the speaker isn't added to it
@@ -86,14 +87,14 @@ def test_speaker_callsign_in_ukrainian(monkeypatch):
 
 
 def test_ukrainian_threat_clip_is_a_no_fly_zone():
-    r = parse_report(_clip("badger2-threat-uk"), _ids())
+    r = parse_report(_clip("charlie-threat-uk"), _ids())
     assert [(e["type"], e["subject_id"]) for e in r.events] == [("NO_FLY_ZONE", "med-2")]
     e = r.events[0]
     assert (e["distance_m"], e["bearing_deg"], e["radius_m"]) == (800, 45, 500)
 
 
 def test_asking_for_a_drone_is_not_a_threat():
-    r = parse_report("Борсук один, медик. Надішліть дрон, потрібно два турнікети.", _ids())
+    r = parse_report("Альфа, медик один. Надішліть дрон, потрібно два турнікети.", _ids())
     assert [e["type"] for e in r.events] == ["LOW_STOCK"] and r.unparsed == []
 
 
@@ -128,10 +129,10 @@ def test_decode_audio_without_faster_whispers_decoder():
 def test_restock_urgency_and_casualty_supplies_go_to_the_medic():
     def urgency(text):
         return [e["urgency"] for e in parse_report(text, _ids()).events if e["type"] == "LOW_STOCK"]
-    assert urgency("Борсук два, медик. Потрібен один турнікет, не терміново.") == ["NON_URGENT"]
-    assert urgency("Badger two medic. Need two chest seals urgently.") == ["URGENT"]
-    assert urgency("Борсук два, медик. Потрібна кров.") == ["NON_URGENT"]  # the default
-    r = parse_report("Борсук один-два важкий, потрібна кров дві одиниці.", _ids())
+    assert urgency("Чарлі, медик. Потрібен один турнікет, не терміново.") == ["NON_URGENT"]
+    assert urgency("Charlie medic. Need two chest seals urgently.") == ["URGENT"]
+    assert urgency("Чарлі, медик. Потрібна кров.") == ["NON_URGENT"]  # the default
+    r = parse_report("Альфа два важкий, потрібна кров дві одиниці.", _ids())
     assert [(e["type"], e["subject_id"]) for e in r.events] == [("CASUALTY", "sol-02"), ("LOW_STOCK", "med-1")]
     assert r.events[1]["urgency"] == "CRITICAL" and "items" not in r.events[0]
 
@@ -150,28 +151,28 @@ def test_pilot_reports(monkeypatch):
         assert ev["type"] == "NO_FLY_ZONE" and ev["source"]["user_id"] == "FALCON 2"
         assert zone["results"][0]["zone"]["properties"]["kind"] == "NO_FLY_ZONE"
 
-        asked = client.post("/voice?clip=badger1-eta-uk", content=b"").json()
+        asked = client.post("/voice?clip=alpha-eta-uk", content=b"").json()
         assert asked["results"][0]["status"] == "NONE" and asked["readback"]["uk"] == "Відкритих запитів немає."
         sent = client.post("/voice/text", json={"text": "Закінчуються турнікети, потрібно три.",
-                                                 "speaker": "Борсук один, медик"}).json()
+                                                 "speaker": "Альфа, медик один"}).json()
         drone = sent["results"][0]["drone_id"]
-        asked = client.post("/voice?clip=badger1-eta-uk", content=b"").json()
+        asked = client.post("/voice?clip=alpha-eta-uk", content=b"").json()
         assert asked["results"][0]["drone_id"] == drone and asked["results"][0]["eta_s"] > 0
         assert "прибуде приблизно через" in asked["readback"]["uk"]
 
 
 def test_free_speech_as_whisper_writes_it():
     ids = _ids()
-    unhurt = sorted(cs for cs in ids if cs.startswith("BADGER") and not cs.endswith("-DOC"))
+    unhurt = sorted(cs for cs in ids if re.search(r"-\d+$", cs))
     # no soldier named: the next unhurt soldiers of the speaker's squad, and the summary says so
-    r = parse_report("Борсук-3, медик. Двоє... Два поранені, важкий стан.", ids, unhurt=unhurt)
-    assert [e["callsign"] for e in r.events] == ["BADGER 3-1", "BADGER 3-2"]
+    r = parse_report("Дельта, медик. Двоє... Два поранені, важкий стан.", ids, unhurt=unhurt)
+    assert [e["callsign"] for e in r.events] == ["DELTA-1", "DELTA-2"]
     assert "soldier not named" in r.english
     assert parse_report("Один поранений, критичний.", ids).unparsed[0].startswith("casualty heard but not which")
     # digits run together, Russian spellings and plain English kit names
-    assert parse_report("Борсук 32 важкий", ids).events[0]["callsign"] == "BADGER 3-2"
-    assert parse_report("Барсук три-два, тяжелый.", ids).events[0]["severity"] == "CRITICAL"
-    ev = parse_report("Badger one, medic. I need more bandages.", ids).events[0]
+    assert parse_report("Дельта 2 важкий", ids).events[0]["callsign"] == "DELTA-2"
+    assert parse_report("Дельта два, тяжелый.", ids).events[0]["severity"] == "CRITICAL"
+    ev = parse_report("Alpha, medic one. I need more bandages.", ids).events[0]
     assert ev["subject_id"] == "med-1" and ev["items"] == {"hemostatic_gauze": 1}
 
 
@@ -185,11 +186,11 @@ def test_transcribe_redoes_other_languages_as_ukrainian(monkeypatch):
         def transcribe(self, pcm, language=None, initial_prompt=None, **_):
             calls.append(language)
             info = SimpleNamespace(language=language or "ru", all_language_probs=[("ru", .6), ("uk", .3), ("en", .1)])
-            return iter([SimpleNamespace(text=" Борсук один ")]), info
+            return iter([SimpleNamespace(text=" Альфа один ")]), info
 
     monkeypatch.setattr(voice, "_whisper", lambda: Model())
     monkeypatch.setattr(voice, "decode_audio", lambda audio: audio)
-    assert voice.transcribe(b"x") == ("Борсук один", "uk") and calls == [None, "uk"]
+    assert voice.transcribe(b"x") == ("Альфа один", "uk") and calls == [None, "uk"]
     calls.clear()
     assert voice.transcribe(b"x", "en")[1] == "en" and calls == ["en"]
     # detected as English but not surely: still Ukrainian; surely English: English
@@ -202,10 +203,10 @@ def test_transcribe_redoes_other_languages_as_ukrainian(monkeypatch):
 
 def test_squad_named_while_another_medic_speaks():
     ids = _ids()
-    unhurt = sorted(cs for cs in ids if cs.startswith("BADGER") and not cs.endswith("-DOC"))
-    text = "Борсук три, медик. Борсук два, поранений критичний. Сильна кровотеча з ноги. Потрібен турнікет і кров."
+    unhurt = sorted(cs for cs in ids if re.search(r"-\d+$", cs))
+    text = "Дельта, медик. Чарлі, поранений критичний. Сильна кровотеча з ноги. Потрібен турнікет і кров."
     r = parse_report(text, ids, unhurt=unhurt)
-    assert [(e["type"], e["callsign"]) for e in r.events] == [("CASUALTY", "BADGER 2-1"), ("LOW_STOCK", "BADGER 2-DOC")]
+    assert [(e["type"], e["callsign"]) for e in r.events] == [("CASUALTY", "CHARLIE-1"), ("LOW_STOCK", "CHARLIE-MED1")]
     assert r.events[1]["items"] == {"tourniquet": 1, "blood_oneg": 1} and r.events[1]["urgency"] == "CRITICAL"
     assert parse_report("Сокiл два, пілот. Ворожий дрон, вісімсот метрів на північ.", ids,
                         drones={"FALCON 2": ("drn-04", (47.6, 35.6))}).events[0]["type"] == "NO_FLY_ZONE"
@@ -213,7 +214,7 @@ def test_squad_named_while_another_medic_speaks():
 
 def test_coordinator_test_sentences_with_another_speaker_selected():
     ids = _ids()
-    r = parse_report("Борсук три, медик. Борсук один, терміново потрібно поповнення: дві одиниці крові нульова "
+    r = parse_report("Дельта, медик. Альфа, терміново потрібно поповнення: дві одиниці крові нульова "
                      "негативна і три турнікети.", ids)
     assert r.events[0]["subject_id"] == "med-1"  # the medic named in the call, not the one selected
     r = parse_report("Сокіл 1 збитий.", ids, lost_drones=frozenset({"FALCON 1"}))

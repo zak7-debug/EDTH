@@ -36,10 +36,10 @@ from fastapi.staticfiles import StaticFiles
 from .dispatch import DispatchEngine
 from .evac import EvacTracker
 from .flights import FlightTracker
-from . import blocks, querylog, resilience, tiles, voice
+from . import blocks, gps, querylog, resilience, tiles, voice
 from .geo import api as geo_api
 from .messages import (dispatch_msg, event_msg, no_dispatch_msg, query_log_msg, queue_msg, snapshot,
-                       drone_lost_msg, supply_chain_msg, zone_added_msg)
+                       drone_lost_msg, positions_msg, supply_chain_msg, zone_added_msg)
 from .models import Dispatch, Event, NoFlyZone
 from .repo import get_repo
 from .stock import StockKeeper
@@ -91,7 +91,7 @@ DEMO_SCRIPT = [
 
 LOSS_THREAT_RADIUS_M = 600  # TUNE: size of the zone drawn where a drone was shot down
 
-# DEMO: the threat reported mid-scenario (fictional), between Launch Site West and BADGER 1.
+# DEMO: the threat reported mid-scenario (fictional), between Launch Site West and ALPHA.
 DEMO_THREAT = {"name": "New air-defence threat", "lat": 47.6498, "lon": 35.5888, "radius_m": 900}
 
 
@@ -114,6 +114,7 @@ class World:
         self.stock = StockKeeper(self.repo)  # launch-site stock and restock orders
         self.tracker = FlightTracker(self.engine, stock=self.stock)
         self.evac = EvacTracker(self.engine, self.tracker, self.stock)
+        self.gps = gps.LiveGps()  # simulated GPS feed and field reports, off until POST /geo/live
         self.stock.check_all()  # DEMO: Launch Site West starts short of blood, so it reorders straight away
 
 
@@ -275,6 +276,56 @@ async def process(raw: dict, received_perf: float) -> dict:
     return result.to_dict()
 
 
+@app.post("/positions")
+async def post_positions(body: dict):
+    """HOOK: GPS fixes from devices. Body: {"positions": [{"id", "lat", "lon", "accuracy_m"?}]}.
+    Moves each known person and broadcasts one `positions` message; unknown ids are skipped."""
+    fixes = body.get("positions")
+    if not isinstance(fixes, list):
+        raise HTTPException(422, "body needs a positions list")
+    moved, skipped = gps.apply_positions(world.repo, fixes)
+    if moved:
+        await broadcast(positions_msg(moved))
+    return {"moved": [m["id"] for m in moved], "skipped": skipped}
+
+
+@app.get("/geo/live")
+def get_geo_live():
+    return world.gps.state()
+
+
+@app.post("/geo/live")
+async def post_geo_live(body: dict):
+    """DEMO: turn the simulated GPS feed (gps.py) on or off. Body: {"on": true|false}."""
+    return world.gps.set(bool(body.get("on")), world.repo.list_personnel())
+
+
+def _busy_people(w) -> set[str]:
+    """Medics with a drone on the way stay put, so it lands where they are."""
+    return {f.dispatch.recipient_id for f in w.tracker.flights.values() if getattr(f, "dispatch", None)}
+
+
+async def live_gps_step(w, step: bool = True, report: bool = False) -> dict:
+    """One beat of the simulated feed: move a few people, maybe file a geolocated field report.
+    The report goes through process() like a spoken one, so it becomes a zone (geo/)."""
+    out: dict = {"moved": [], "report": None}
+    if step:
+        out["moved"] = w.gps.step(w.repo, _busy_people(w))
+        if out["moved"]:
+            await broadcast(positions_msg(out["moved"]))
+    if report:
+        for _ in range(4):  # a road block needs a road within reach: try another spot if there isn't one
+            ev = w.gps.make_report(w.repo)
+            if ev is None:
+                break
+            try:
+                out["report"] = await process(ev, time.perf_counter())
+                break
+            except HTTPException:
+                w.gps.reports -= 1  # same kind again from elsewhere
+    return out
+
+
 @app.post("/events")
 async def post_event(body: dict):
     received = time.perf_counter()  # HOOK: latency_ms starts here
@@ -353,6 +404,9 @@ async def _tick_loop():
             for m in w.tracker.step(now - last) + w.evac.step(now - last):  # flights, shipments, evacuations
                 await broadcast(m)
             await geo_api.expire_due(w)  # spoken-report zones past their expiry
+            step, report = w.gps.due(now)  # simulated GPS feed (gps.py), when on
+            if step or report:
+                await live_gps_step(w, step, report)
         except Exception as e:  # never let one bad tick kill the loop mid-demo
             print("tick error:", e)
         last = now

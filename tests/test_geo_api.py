@@ -6,7 +6,7 @@ from backend.app import roads
 from backend.app.geo.project import bearing_deg, distance_m, project
 from backend.app.routing import Router
 
-MED2 = (47.6226, 35.60227)  # BADGER 2-DOC in the seed
+MED2 = (47.6226, 35.60227)  # CHARLIE-MED1 in the seed
 
 
 @pytest.fixture
@@ -124,7 +124,7 @@ def test_destination_snaps_to_a_drop_point(client):
     c, _ = client
     med1 = (47.638558, 35.63715)
     d, b = distance_m(med1, MED2), bearing_deg(med1, MED2)
-    r = c.post("/events", json={"type": "DESTINATION", "subject_id": "med-1",  # a rough guess at BADGER 2-DOC
+    r = c.post("/events", json={"type": "DESTINATION", "subject_id": "med-1",  # a rough guess at CHARLIE-MED1
                                 "distance_m": round(d * 1.05), "bearing_deg": round(b + 3)})
     dest = r.json()["destination"]
     assert dest["snapped_to"] == "med-2" and dest["moved_m"] < 300
@@ -132,17 +132,17 @@ def test_destination_snaps_to_a_drop_point(client):
 
 def test_voice_report_becomes_a_zone(client):
     c, dev = client
-    text = "Борсук два, медик. Ворожий дрон, вісімсот метрів на північний схід. Закрити п'ятсот метрів."
+    text = "Чарлі, медик. Ворожий дрон, вісімсот метрів на північний схід. Закрити п'ятсот метрів."
     body = c.post("/voice/text", json={"text": text, "language": "uk"}).json()
     assert [e["type"] for e in body["events"]] == ["NO_FLY_ZONE"]
-    assert body["english"].startswith("BADGER 2-DOC reports no-fly zone 800 m at 45")
+    assert body["english"].startswith("CHARLIE-MED1 reports no-fly zone 800 m at 45")
     res = body["results"][0]
     assert distance_m(tuple(res["centre"]), project(*MED2, 800, 45)) < 1
     assert any(z.id == res["zone"]["id"] for z in dev.world.repo.list_no_fly_zones())
 
 
 def test_road_blocked_on_real_roads(client, monkeypatch, tmp_path):
-    """Same, on downloaded roads (roads.json): a tiny two-road network round BADGER 2."""
+    """Same, on downloaded roads (roads.json): a tiny two-road network round CHARLIE."""
     import json
     lat, lon = MED2
     data = {"nodes": [[lat + 0.003, lon - 0.01], [lat + 0.003, lon], [lat + 0.003, lon + 0.01],

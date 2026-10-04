@@ -6,9 +6,9 @@ from backend.app.models import Dispatch
 
 def test_seed_counts(repo):
     people = repo.list_personnel()
-    assert len(people) == 20
-    assert sum(p.kind == "MEDIC" for p in people) == 3
-    assert len(repo.list_units()) == 3
+    assert len(people) == 40  # 4 teams x (2 medics + 8 soldiers)
+    assert sum(p.kind == "MEDIC" for p in people) == 8
+    assert len(repo.list_units()) == 4
     assert len(repo.list_drones()) == 8
     assert len(repo.list_depots()) == 3
     assert len(repo.list_no_fly_zones()) == 2

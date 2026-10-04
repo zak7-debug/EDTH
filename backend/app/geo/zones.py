@@ -177,15 +177,15 @@ class ZoneStore:
                reporter_id: Optional[str] = None, radius_m: Optional[float] = None,
                uncertainty_m: float = 0.0, assumptions: Optional[list[str]] = None,
                needs_confirmation: bool = False, edge: Optional[tuple[Point, Point]] = None,
-               now: Optional[float] = None) -> tuple[GeoZone, str]:
-        """Add one report: (zone, "created" | "updated")."""
+               now: Optional[float] = None, expires_s: Optional[float] = None) -> tuple[GeoZone, str]:
+        """Add one report: (zone, "created" | "updated"). expires_s overrides the type's expires_min."""
         now = time.time() if now is None else now
         tcfg = self.cfg["types"][kind]
         radius = float(radius_m if radius_m is not None else tcfg["radius_m"])
         expand = self.cfg["uncertainty"]["expand_zones"] and kind != "ROAD_BLOCKED"  # a road is snapped
         rep = Report(event_id, reporter_id, reporter, centre, radius, uncertainty_m,
                      radius + (uncertainty_m if expand else 0.0), now)
-        expires = now + tcfg["expires_min"] * 60
+        expires = now + (float(expires_s) if expires_s is not None else tcfg["expires_min"] * 60)
 
         zone = self._merge_target(kind, centre, edge)
         if zone is None:
