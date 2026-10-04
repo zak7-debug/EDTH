@@ -140,7 +140,8 @@ class GeoService:
         zone, action = self.store.report(kind, centre, reporter=reporter, event_id=event_id,
                                          reporter_id=reporter_id, radius_m=loc.radius_m,
                                          uncertainty_m=loc.uncertainty_m, assumptions=loc.assumptions,
-                                         needs_confirmation=loc.needs_confirmation, edge=edge, now=now)
+                                         needs_confirmation=loc.needs_confirmation, edge=edge, now=now,
+                                         expires_s=_num(event.get("expires_s"), "expires_s"))
         body["zone"] = zone.feature()
         body["action"] = action
         return body, [(action, zone)]
