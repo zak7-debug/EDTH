@@ -15,6 +15,10 @@ Open http://localhost:8000 and press **Run demo scenario**. Rerun `./start.sh` b
 
 Press **Radio** in the dashboard's dock. Medics, identified by their Ukrainian callsign («Борсук один, медик»), report casualties, restocks and threats. Truck drivers report blocked roads from their position on the map. Use the scripted calls, hold to talk, or type. Pick who is speaking first; then free speech works: «Один поранений, важкий, потрібна кров» marks the next unhurt soldier of that squad (name them, «Борсук три-два», to be exact). The panel shows what was heard and why anything wasn't acted on. Speech to text is offline faster-whisper (`pip install -r requirements-voice.txt`, then `python scripts/fetch_whisper.py` once while online). Without it, the scripted calls fall back to their saved transcripts. From a laptop: `python -m voice.pipeline --mic --speaker "Борсук один, медик"` (needs `pip install sounddevice`). Details: README_voice_intake.md, README_audio_geolocation.md.
 
+## Live geolocation
+
+Press **GPS** in the dock and turn on **📡 Live GPS**. Every 3 s a few unhurt soldiers and medics move a short step (staying near their squad, never into a no-fly zone); casualties stay put. About every 45 s a soldier sends a geolocated field report, alternately a blocked road and an air threat, which goes through the same geo pipeline as a spoken report: vehicles or drones reroute and the zone expires after 4 minutes. Real devices send fixes to `POST /positions` (`{"positions": [{"id", "lat", "lon"}]}`). Tune it in backend/app/gps.py; Reset turns it off.
+
 ## Test
 
 ```bash

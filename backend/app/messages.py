@@ -12,7 +12,7 @@ from .repo import GraphRepo
 
 WS_TYPES = ("snapshot", "event", "dispatch", "no_dispatch", "drone_update", "delivered", "queue", "query_log", "zone_added", "reroute", "drone_lost", "supply_chain",
             "stock_update", "evacuation", "evac_update", "admitted", "voice_report", "site_deployed",
-            "site_ready", "zone_created", "zone_updated", "zone_expired")
+            "site_ready", "zone_created", "zone_updated", "zone_expired", "positions")
 
 
 def msg(type_: str, data: dict) -> dict:
@@ -82,6 +82,12 @@ def geo_zone_msg(type_: str, feature: dict, reason: str = "") -> dict:
     if reason:
         data["reason"] = reason
     return msg(type_, data)
+
+
+def positions_msg(positions: list[dict]) -> dict:
+    """People moved (GPS fixes from POST /positions, or the simulated live feed in gps.py).
+    positions: [{"id", "lat", "lon"}]. Only position changes; status comes in `event` / `evac_update`."""
+    return msg("positions", {"positions": [{"id": p["id"], "lat": p["lat"], "lon": p["lon"]} for p in positions]})
 
 
 def zone_added_msg(zone) -> dict:

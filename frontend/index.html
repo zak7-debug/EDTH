@@ -124,6 +124,10 @@
   /* Radio (voice reports, voice.py + geo/) */
   #dock button[data-pane=radio] svg { color: #64d2ff; }
   #dock button.rec { background: rgba(255,69,58,.35); }
+  /* Live GPS (gps.py): people move with their fixes; field reports become zones. */
+  #dock button[data-pane=gps] svg { color: #30d158; }
+  #gpsBadge { background: #30d158; }
+  #gpsBtn.live { background: rgba(48,209,88,.35); }
   #radioText { width: 100%; box-sizing: border-box; min-height: 56px; resize: vertical; font: inherit; font-size: 15px; background: rgba(255,255,255,.08); color: var(--text); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 10px; }
   #talkBtn.rec { background: rgba(255,69,58,.4); }
   #radioOut { font-size: 14px; line-height: 1.4; } #radioOut div { margin: 3px 0; }
@@ -308,6 +312,7 @@
   <button data-pane="block" title="Block a road or rail line (ground only)"><span class="badge" id="blockCount" style="display:none">0</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"/><path d="M7.5 12h9"/></svg>Block</button>
   <button data-pane="drone" title="Drone shot down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="8" y="8" width="8" height="8" rx="2" transform="rotate(45 12 12)"/><path d="M4 4l3 3M20 4l-3 3M4 20l3-3M20 20l-3-3"/></svg>Drone</button>
   <button data-pane="sites" title="Hubs, hospitals and the supply chain"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 21V9l9-6 9 6v12z"/><path d="M9 21v-6h6v6"/></svg>Sites</button>
+  <button data-pane="gps" title="Live GPS: people move with their position fixes, field reports become zones"><span class="badge" id="gpsBadge" style="display:none">LIVE</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"/><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8"/></svg>GPS</button>
 </nav>
 
 <!-- Second layer: the sheet. One pane at a time, grouped like a settings card. -->
@@ -369,6 +374,12 @@
     <div class="group"><h3>Hub or hospital</h3><div class="row"><select id="siteSel"></select></div></div>
     <div class="row"><button class="crit grow" id="siteBtn">Destroy</button></div>
     <div class="row"><button class="grow" id="chainBtn">Show supply chain on map</button></div>
+  </div>
+  <div class="pane" data-pane="gps">
+    <h2>Live GPS <button class="ghost x" data-close>✕</button></h2>
+    <p class="hint">Unhurt people move with their position fixes. Every so often a soldier's geolocated report adds a road block or an air threat, which expires after a few minutes.</p>
+    <div class="row"><button class="grow" id="gpsBtn">📡 Live GPS: off</button></div>
+    <div class="group" style="margin-top:6px"><h3>Last fix</h3><div id="gpsOut"><div class="empty" style="padding:0 4px 8px">No positions yet</div></div></div>
   </div>
 </div>
 
@@ -589,6 +600,19 @@ function drawPerson(p) {
   m.bindPopup(personPopup(p));
 }
 
+// Positions (POST /positions or the live GPS feed): glide each marker to its new fix.
+const GLIDE_MS = 1200;  // TUNE: how long a marker takes to slide to its new position
+function glide(m, to) {
+  const from = m.getLatLng(), t0 = performance.now();
+  if (m._glide) cancelAnimationFrame(m._glide);
+  const tick = now => {
+    const k = Math.min(1, (now - t0) / GLIDE_MS), e = k * (2 - k);
+    m.setLatLng([from.lat + (to[0] - from.lat) * e, from.lng + (to[1] - from.lng) * e]);
+    m._glide = k < 1 ? requestAnimationFrame(tick) : null;
+  };
+  m._glide = requestAnimationFrame(tick);
+}
+
 // Parked or lost drones show just the diamond, so they don't bury the launch-site label; hover names them.
 function droneIcon(d) {
   const e = eta[d.id];
@@ -697,6 +721,7 @@ function loadSnapshot(data) {
   }
   fillTriggers();
   renderMissions();
+  refreshGps();  // a reset turns the feed off and sends a fresh snapshot
 }
 
 // Hospitals and aid stations are evacuation destinations, so they sit on the sector map (the rear
@@ -858,13 +883,23 @@ const handlers = {
       .bindTooltip(z.name, { permanent: true, direction: 'center', className: 'lbl' }).addTo(layers.zones);
     log(`<span class="sev-CRITICAL">THREAT</span> reported: ${esc(z.name)}`, 'nod');
   },
+  positions(d) {
+    for (const x of d.positions || []) {
+      const p = S.personnel[x.id]; if (!p) continue;
+      p.lat = x.lat; p.lon = x.lon;
+      const m = markers.personnel[x.id]; if (m) glide(m, [x.lat, x.lon]);
+    }
+    const n = (d.positions || []).length;
+    document.getElementById('gpsOut').innerHTML = `<div style="padding:0 4px 8px">${clock(new Date())} · ${n} ${n === 1 ? 'person' : 'people'} moved</div>`;
+  },
   zone_created(f) {
     drawGeoZone(f);
     const p = f.properties;
     const size = p.kind === 'ROAD_BLOCKED'
       ? `snapped to the nearest road, position ±${Math.round(p.uncertainty_m)} m`
       : `radius ${Math.round(p.effective_radius_m)} m incl. ±${Math.round(p.uncertainty_m)} m`;
-    log(`<span class="sev-CRITICAL">${esc((GEO_LABEL[p.kind] || p.name).toUpperCase())}</span> from a radio report, ` +
+    const via = (p.assumptions || []).includes('live GPS report') ? 'a live GPS report' : 'a radio report';
+    log(`<span class="sev-CRITICAL">${esc((GEO_LABEL[p.kind] || p.name).toUpperCase())}</span> from ${via}, ` +
         `${size} (${esc(p.status)})`, 'nod');
   },
   zone_updated(f) {
@@ -1244,6 +1279,24 @@ document.getElementById('lowBtn').onclick = () => post('/events', { type: 'LOW_S
   subject_id: document.getElementById('medicSel').value,
   items: { [document.getElementById('itemSel').value]: +document.getElementById('qty').value || 1 },
   urgency: (document.querySelector('#urgSeg .on') || {}).dataset.urg || 'URGENT' });
+
+// Live GPS toggle (POST /geo/live).
+function showGps(st) {
+  const on = !!(st && st.on), b = document.getElementById('gpsBtn');
+  b.textContent = on ? '📡 Live GPS: on' : '📡 Live GPS: off';
+  b.classList.toggle('live', on);
+  document.getElementById('gpsBadge').style.display = on ? '' : 'none';
+}
+function refreshGps() { fetch(API + '/geo/live').then(r => r.json()).then(showGps).catch(() => {}); }
+document.getElementById('gpsBtn').onclick = async () => {
+  const on = !document.getElementById('gpsBtn').classList.contains('live');
+  try {
+    const r = await fetch(API + '/geo/live', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on }) });
+    if (!r.ok) return toast(`/geo/live: ${r.status}`);
+    const st = await r.json(); showGps(st);
+    log(`Live GPS ${st.on ? 'on: people move every ' + st.step_s + ' s, a field report every ' + st.report_every_s + ' s' : 'off'}`);
+  } catch (e) { toast('Backend not reachable: start it with ./start.sh'); }
+};
 
 document.getElementById('siteSel').onchange = updateSiteBtn;
 document.getElementById('siteBtn').onclick = () => {
