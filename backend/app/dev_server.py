@@ -91,7 +91,7 @@ DEMO_SCRIPT = [
 
 LOSS_THREAT_RADIUS_M = 600  # TUNE: size of the zone drawn where a drone was shot down
 
-# DEMO: the threat reported mid-scenario (fictional), between Launch Site West and BADGER 1.
+# DEMO: the threat reported mid-scenario (fictional), between Launch Site West and ALPHA.
 DEMO_THREAT = {"name": "New air-defence threat", "lat": 47.6498, "lon": 35.5888, "radius_m": 900}
 
 

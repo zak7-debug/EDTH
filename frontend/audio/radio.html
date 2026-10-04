@@ -26,7 +26,7 @@
 <body>
 <main>
   <h1>Radio test</h1>
-  <p class="hint">Keep the dashboard open in another tab: each report below triggers the same dispatches as the trigger panel. Lines are fictional (BADGER callsigns from the seed).</p>
+  <p class="hint">Keep the dashboard open in another tab: each report below triggers the same dispatches as the trigger panel. Lines are fictional (ALPHA, CHARLIE, DELTA, ECHO callsigns from the seed).</p>
 
   <section>
     <h2>Scripted clips</h2>
@@ -37,19 +37,19 @@
   <section>
     <h2>Microphone</h2>
     <button id="mic">Hold to talk</button>
-    <span class="hint">Needs faster-whisper on the server. Try: «Борсук два, медик. Борсук два-п'ять, поранений.»</span>
+    <span class="hint">Needs faster-whisper on the server. Try: «Чарлі, медик. Чарлі п'ять, поранений.»</span>
   </section>
 
   <section>
     <h2>Type a transcript</h2>
-    <textarea id="text">Борсук три, медик. Борсук три-два, важкий, масивна кровотеча з ноги. У мене закінчується кров, потрібно дві одиниці.</textarea>
+    <textarea id="text">Дельта, медик. Дельта два, важкий, масивна кровотеча з ноги. У мене закінчується кров, потрібно дві одиниці.</textarea>
     <button id="send">Send text</button>
   </section>
 
   <section class="out" id="out"><h2>Last report</h2><div class="hint">Nothing sent yet.</div></section>
 </main>
 <script>
-const CLIPS = ["badger3-critical-uk", "badger1-stock-uk", "badger1-wounded-en", "badger2-threat-uk"];
+const CLIPS = ["delta-critical-uk", "alpha-stock-uk", "alpha-wounded-en", "charlie-threat-uk"];
 const out = document.getElementById("out");
 
 function show(r, wallMs) {

@@ -4,14 +4,14 @@ The server does the work (backend/app/voice.py): speech to text with faster-whis
 English parser, then the usual dispatch. This script only captures the audio and posts it, so a report
 from here is handled exactly like one from the dashboard's radio page.
 
-Who is speaking: the medic says their callsign at the start of the call («Борсук один, медик. ...»).
+Who is speaking: the medic says their callsign at the start of the call («Альфа, медик один. ...»).
 If the device knows who is holding it, pass --speaker with the same Ukrainian callsign instead, and
-the server reads it as if spoken first. The server maps it to the graph id (BADGER 1-DOC -> med-1).
+the server reads it as if spoken first. The server maps it to the graph id (ALPHA-MED1 -> med-1).
 
-    python -m voice.pipeline --file call.wav --speaker "Борсук один, медик"
-    python -m voice.pipeline --mic --seconds 8 --speaker "Борсук два, медик"
-    python -m voice.pipeline --text "Закінчуються турнікети, потрібно три" --speaker "Борсук один, медик"
-    python -m voice.pipeline --clip badger3-critical-uk     # a scripted clip (frontend/audio/)
+    python -m voice.pipeline --file call.wav --speaker "Альфа, медик один"
+    python -m voice.pipeline --mic --seconds 8 --speaker "Чарлі, медик один"
+    python -m voice.pipeline --text "Закінчуються турнікети, потрібно три" --speaker "Альфа, медик один"
+    python -m voice.pipeline --clip delta-critical-uk     # a scripted clip (frontend/audio/)
 
 The microphone needs `pip install sounddevice`. Everything else uses the project's requirements.
 """
@@ -96,7 +96,7 @@ def main() -> None:
     src.add_argument("--clip", help="a scripted clip name from frontend/audio/")
     ap.add_argument("--seconds", type=float, default=8, help="recording length for --mic")
     ap.add_argument("--speaker", default=os.environ.get("EDTH_SPEAKER"),
-                    help='your callsign as you would say it, e.g. "Борсук один, медик" (or set EDTH_SPEAKER)')
+                    help='your callsign as you would say it, e.g. "Альфа, медик один" (or set EDTH_SPEAKER)')
     ap.add_argument("--language", default="uk", help="uk (default) or en; 'auto' lets Whisper detect it")
     ap.add_argument("--backend", default=os.environ.get("EDTH_BACKEND", "http://localhost:8000"))
     args = ap.parse_args()

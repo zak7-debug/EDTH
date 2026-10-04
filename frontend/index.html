@@ -21,7 +21,7 @@
 <link rel="icon" href="data:,">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Medic Resupply Ops</title>
+<title>Auxilium: Medical Resupply</title>
 <!-- Leaflet 1.9.4 is vendored in vendor/leaflet so the map works on hackathon wifi (only the tiles need internet). -->
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 <script src="vendor/leaflet/leaflet.js"></script>
@@ -286,7 +286,7 @@
   <div id="map"></div>
 </div>
 <header id="top" class="glass">
-  <h1>Medic Resupply Ops</h1>
+  <h1>Auxilium: Medical Resupply</h1>
   <span id="conn" class="pill">connecting</span>
   <div class="kpis">
     <div class="kpi" title="From the event arriving to the drone being chosen"><span class="k">Event → dispatch</span><div><span class="v" id="latLast">--</span><span class="u">ms</span></div><span class="sub">avg <b id="latAvg">--</b> ms</span></div>
@@ -1361,27 +1361,27 @@ map.on('click', e => {
 // ---------------------------------------------------------------------------------------------
 // Radio (voice.py, geo/): a medic, drone pilot or truck driver speaks; the server transcribes it
 // (faster-whisper, offline), parses it and runs the same events as the buttons above. Medics are
-// identified by their Ukrainian callsign («Борсук один, медик»), said in the call or picked here.
+// identified by their Ukrainian callsign («Альфа, медик один»), said in the call or picked here.
 // Truck drivers aren't in the graph, so their position is set on the map (the phone's GPS in real use).
 // ---------------------------------------------------------------------------------------------
 // DEMO: scripted calls in frontend/audio/ (<name>.txt is the line; <name>.wav etc. if recorded).
 const CLIPS = [
-  { name: 'badger3-critical-uk', label: '🩸 Medic: critical + blood' },
-  { name: 'badger1-stock-uk', label: '📦 Medic: low on tourniquets' },
-  { name: 'badger2-threat-uk', label: '⚠️ Medic: enemy drone' },
+  { name: 'delta-critical-uk', label: '🩸 Medic: critical + blood' },
+  { name: 'alpha-stock-uk', label: '📦 Medic: low on tourniquets' },
+  { name: 'charlie-threat-uk', label: '⚠️ Medic: enemy drone' },
   { name: 'driver-road-uk', label: '🚚 Driver: road blocked', driver: true },
-  { name: 'badger1-eta-uk', label: '⏱ Medic: how long?' },
+  { name: 'alpha-eta-uk', label: '⏱ Medic: how long?' },
   { name: 'falcon2-threat-uk', label: '🛩 Pilot: enemy drone' },
   { name: 'hawk3-lost-uk', label: '💥 Pilot: drone shot down' },
-  { name: 'badger1-wounded-en', label: '🇬🇧 Medic: wounded (EN)' },
+  { name: 'alpha-wounded-en', label: '🇬🇧 Medic: wounded (EN)' },
 ];
 const DRIVER_DEFAULT = { lat: 47.672, lon: 35.585 };  // DEMO: a truck on the sector roads (fictional)
 const UK_NUM = ['нуль', 'один', 'два', 'три', 'чотири', "п'ять", 'шість', 'сім', 'вісім', "дев'ять"];
-const UK_SQUAD = { BADGER: 'Борсук' };
+const UK_SQUAD = { ALPHA: 'Альфа', CHARLIE: 'Чарлі', DELTA: 'Дельта', ECHO: 'Ехо' };
 let driverPos = null, driverMarker = null;
-function ukCallsign(cs) {  // "BADGER 1-DOC" -> "Борсук один, медик"
-  const m = /^(\w+) (\d)-DOC$/.exec(cs);
-  return m ? `${UK_SQUAD[m[1]] || m[1]} ${UK_NUM[+m[2]]}, медик` : cs;
+function ukCallsign(cs) {  // "ALPHA-MED1" -> "Альфа, медик один"
+  const m = /^(\w+)-MED(\d)$/.exec(cs);
+  return m ? `${UK_SQUAD[m[1]] || m[1]}, медик ${UK_NUM[+m[2]]}` : cs;
 }
 function fillSpeakers(medics) {
   const sel = document.getElementById('speakerSel'), keep = sel.value;

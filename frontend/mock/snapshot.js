@@ -3,22 +3,26 @@ window.MOCK_SNAPSHOT = {
  "units": [
   {
    "id": "unit-1",
-   "callsign": "BADGER 1"
+   "callsign": "ALPHA"
   },
   {
    "id": "unit-2",
-   "callsign": "BADGER 2"
+   "callsign": "CHARLIE"
   },
   {
    "id": "unit-3",
-   "callsign": "BADGER 3"
+   "callsign": "DELTA"
+  },
+  {
+   "id": "unit-4",
+   "callsign": "ECHO"
   }
  ],
  "personnel": [
   {
    "id": "med-1",
    "kind": "MEDIC",
-   "callsign": "BADGER 1-DOC",
+   "callsign": "ALPHA-MED1",
    "unit_id": "unit-1",
    "lat": 47.638558,
    "lon": 35.63715,
@@ -42,7 +46,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "sol-01",
    "kind": "SOLDIER",
-   "callsign": "BADGER 1-1",
+   "callsign": "ALPHA-1",
    "unit_id": "unit-1",
    "lat": 47.6371,
    "lon": 35.638339,
@@ -54,7 +58,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "sol-02",
    "kind": "SOLDIER",
-   "callsign": "BADGER 1-2",
+   "callsign": "ALPHA-2",
    "unit_id": "unit-1",
    "lat": 47.638946,
    "lon": 35.64106,
@@ -66,7 +70,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "sol-03",
    "kind": "SOLDIER",
-   "callsign": "BADGER 1-3",
+   "callsign": "ALPHA-3",
    "unit_id": "unit-1",
    "lat": 47.639569,
    "lon": 35.637522,
@@ -78,7 +82,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "sol-04",
    "kind": "SOLDIER",
-   "callsign": "BADGER 1-4",
+   "callsign": "ALPHA-4",
    "unit_id": "unit-1",
    "lat": 47.637688,
    "lon": 35.637179,
@@ -90,7 +94,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "sol-05",
    "kind": "SOLDIER",
-   "callsign": "BADGER 1-5",
+   "callsign": "ALPHA-5",
    "unit_id": "unit-1",
    "lat": 47.636875,
    "lon": 35.640032,
@@ -102,7 +106,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "sol-06",
    "kind": "SOLDIER",
-   "callsign": "BADGER 1-6",
+   "callsign": "ALPHA-6",
    "unit_id": "unit-1",
    "lat": 47.636106,
    "lon": 35.638193,
@@ -114,7 +118,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "med-2",
    "kind": "MEDIC",
-   "callsign": "BADGER 2-DOC",
+   "callsign": "CHARLIE-MED1",
    "unit_id": "unit-2",
    "lat": 47.6226,
    "lon": 35.60227,
@@ -138,7 +142,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "sol-07",
    "kind": "SOLDIER",
-   "callsign": "BADGER 2-1",
+   "callsign": "CHARLIE-1",
    "unit_id": "unit-2",
    "lat": 47.620882,
    "lon": 35.602536,
@@ -150,7 +154,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "sol-08",
    "kind": "SOLDIER",
-   "callsign": "BADGER 2-2",
+   "callsign": "CHARLIE-2",
    "unit_id": "unit-2",
    "lat": 47.623238,
    "lon": 35.599039,
@@ -162,7 +166,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "sol-09",
    "kind": "SOLDIER",
-   "callsign": "BADGER 2-3",
+   "callsign": "CHARLIE-3",
    "unit_id": "unit-2",
    "lat": 47.623223,
    "lon": 35.603189,
@@ -174,7 +178,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "sol-10",
    "kind": "SOLDIER",
-   "callsign": "BADGER 2-4",
+   "callsign": "CHARLIE-4",
    "unit_id": "unit-2",
    "lat": 47.621361,
    "lon": 35.599933,
@@ -186,7 +190,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "sol-11",
    "kind": "SOLDIER",
-   "callsign": "BADGER 2-5",
+   "callsign": "CHARLIE-5",
    "unit_id": "unit-2",
    "lat": 47.623829,
    "lon": 35.60102,
@@ -198,7 +202,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "sol-12",
    "kind": "SOLDIER",
-   "callsign": "BADGER 2-6",
+   "callsign": "CHARLIE-6",
    "unit_id": "unit-2",
    "lat": 47.620371,
    "lon": 35.59958,
@@ -210,7 +214,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "med-3",
    "kind": "MEDIC",
-   "callsign": "BADGER 3-DOC",
+   "callsign": "DELTA-MED1",
    "unit_id": "unit-3",
    "lat": 47.60939,
    "lon": 35.662622,
@@ -234,7 +238,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "sol-13",
    "kind": "SOLDIER",
-   "callsign": "BADGER 3-1",
+   "callsign": "DELTA-1",
    "unit_id": "unit-3",
    "lat": 47.609229,
    "lon": 35.663378,
@@ -246,7 +250,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "sol-14",
    "kind": "SOLDIER",
-   "callsign": "BADGER 3-2",
+   "callsign": "DELTA-2",
    "unit_id": "unit-3",
    "lat": 47.608145,
    "lon": 35.664839,
@@ -258,7 +262,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "sol-15",
    "kind": "SOLDIER",
-   "callsign": "BADGER 3-3",
+   "callsign": "DELTA-3",
    "unit_id": "unit-3",
    "lat": 47.607514,
    "lon": 35.662312,
@@ -270,7 +274,7 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "sol-16",
    "kind": "SOLDIER",
-   "callsign": "BADGER 3-4",
+   "callsign": "DELTA-4",
    "unit_id": "unit-3",
    "lat": 47.609318,
    "lon": 35.662711,
@@ -282,10 +286,310 @@ window.MOCK_SNAPSHOT = {
   {
    "id": "sol-17",
    "kind": "SOLDIER",
-   "callsign": "BADGER 3-5",
+   "callsign": "DELTA-5",
    "unit_id": "unit-3",
    "lat": 47.609447,
    "lon": 35.662464,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "med-4",
+   "kind": "MEDIC",
+   "callsign": "ALPHA-MED2",
+   "unit_id": "unit-1",
+   "lat": 47.638818,
+   "lon": 35.637275,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {
+    "tourniquet": 3,
+    "blood_oneg": 2,
+    "chest_seal": 2,
+    "hemostatic_gauze": 3,
+    "morphine_autoinjector": 2
+   },
+   "stock_threshold": {
+    "tourniquet": 2,
+    "blood_oneg": 2,
+    "chest_seal": 2,
+    "hemostatic_gauze": 2,
+    "morphine_autoinjector": 2
+   }
+  },
+  {
+   "id": "sol-18",
+   "kind": "SOLDIER",
+   "callsign": "ALPHA-7",
+   "unit_id": "unit-1",
+   "lat": 47.636912,
+   "lon": 35.638736,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-19",
+   "kind": "SOLDIER",
+   "callsign": "ALPHA-8",
+   "unit_id": "unit-1",
+   "lat": 47.636319,
+   "lon": 35.638397,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "med-5",
+   "kind": "MEDIC",
+   "callsign": "CHARLIE-MED2",
+   "unit_id": "unit-2",
+   "lat": 47.620404,
+   "lon": 35.600668,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {
+    "tourniquet": 3,
+    "blood_oneg": 2,
+    "chest_seal": 2,
+    "hemostatic_gauze": 3,
+    "morphine_autoinjector": 2
+   },
+   "stock_threshold": {
+    "tourniquet": 2,
+    "blood_oneg": 2,
+    "chest_seal": 2,
+    "hemostatic_gauze": 2,
+    "morphine_autoinjector": 2
+   }
+  },
+  {
+   "id": "sol-20",
+   "kind": "SOLDIER",
+   "callsign": "CHARLIE-7",
+   "unit_id": "unit-2",
+   "lat": 47.622543,
+   "lon": 35.601189,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-21",
+   "kind": "SOLDIER",
+   "callsign": "CHARLIE-8",
+   "unit_id": "unit-2",
+   "lat": 47.621481,
+   "lon": 35.600257,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "med-6",
+   "kind": "MEDIC",
+   "callsign": "DELTA-MED2",
+   "unit_id": "unit-3",
+   "lat": 47.607068,
+   "lon": 35.66462,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {
+    "tourniquet": 3,
+    "blood_oneg": 2,
+    "chest_seal": 2,
+    "hemostatic_gauze": 3,
+    "morphine_autoinjector": 2
+   },
+   "stock_threshold": {
+    "tourniquet": 2,
+    "blood_oneg": 2,
+    "chest_seal": 2,
+    "hemostatic_gauze": 2,
+    "morphine_autoinjector": 2
+   }
+  },
+  {
+   "id": "sol-22",
+   "kind": "SOLDIER",
+   "callsign": "DELTA-6",
+   "unit_id": "unit-3",
+   "lat": 47.608592,
+   "lon": 35.662655,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-23",
+   "kind": "SOLDIER",
+   "callsign": "DELTA-7",
+   "unit_id": "unit-3",
+   "lat": 47.606685,
+   "lon": 35.663375,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-24",
+   "kind": "SOLDIER",
+   "callsign": "DELTA-8",
+   "unit_id": "unit-3",
+   "lat": 47.606654,
+   "lon": 35.661277,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "med-7",
+   "kind": "MEDIC",
+   "callsign": "ECHO-MED1",
+   "unit_id": "unit-4",
+   "lat": 47.631958,
+   "lon": 35.71884,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {
+    "tourniquet": 3,
+    "blood_oneg": 2,
+    "chest_seal": 2,
+    "hemostatic_gauze": 3,
+    "morphine_autoinjector": 2
+   },
+   "stock_threshold": {
+    "tourniquet": 2,
+    "blood_oneg": 2,
+    "chest_seal": 2,
+    "hemostatic_gauze": 2,
+    "morphine_autoinjector": 2
+   }
+  },
+  {
+   "id": "med-8",
+   "kind": "MEDIC",
+   "callsign": "ECHO-MED2",
+   "unit_id": "unit-4",
+   "lat": 47.630228,
+   "lon": 35.719108,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {
+    "tourniquet": 3,
+    "blood_oneg": 2,
+    "chest_seal": 2,
+    "hemostatic_gauze": 3,
+    "morphine_autoinjector": 2
+   },
+   "stock_threshold": {
+    "tourniquet": 2,
+    "blood_oneg": 2,
+    "chest_seal": 2,
+    "hemostatic_gauze": 2,
+    "morphine_autoinjector": 2
+   }
+  },
+  {
+   "id": "sol-25",
+   "kind": "SOLDIER",
+   "callsign": "ECHO-1",
+   "unit_id": "unit-4",
+   "lat": 47.631371,
+   "lon": 35.719656,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-26",
+   "kind": "SOLDIER",
+   "callsign": "ECHO-2",
+   "unit_id": "unit-4",
+   "lat": 47.628916,
+   "lon": 35.715193,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-27",
+   "kind": "SOLDIER",
+   "callsign": "ECHO-3",
+   "unit_id": "unit-4",
+   "lat": 47.629262,
+   "lon": 35.716606,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-28",
+   "kind": "SOLDIER",
+   "callsign": "ECHO-4",
+   "unit_id": "unit-4",
+   "lat": 47.628844,
+   "lon": 35.720657,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-29",
+   "kind": "SOLDIER",
+   "callsign": "ECHO-5",
+   "unit_id": "unit-4",
+   "lat": 47.631505,
+   "lon": 35.716888,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-30",
+   "kind": "SOLDIER",
+   "callsign": "ECHO-6",
+   "unit_id": "unit-4",
+   "lat": 47.630622,
+   "lon": 35.717374,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-31",
+   "kind": "SOLDIER",
+   "callsign": "ECHO-7",
+   "unit_id": "unit-4",
+   "lat": 47.631658,
+   "lon": 35.717753,
+   "status": "OK",
+   "last_update": 0.0,
+   "stock": {},
+   "stock_threshold": {}
+  },
+  {
+   "id": "sol-32",
+   "kind": "SOLDIER",
+   "callsign": "ECHO-8",
+   "unit_id": "unit-4",
+   "lat": 47.62906,
+   "lon": 35.71648,
    "status": "OK",
    "last_update": 0.0,
    "stock": {},
@@ -656,6 +960,91 @@ window.MOCK_SNAPSHOT = {
    "status": "OPERATIONAL"
   },
   {
+   "id": "sup-03",
+   "kind": "SUPPLIER",
+   "name": "Pharmaceutical manufacturer (Kyiv region)",
+   "lat": 50.3,
+   "lon": 30.25,
+   "stock": {
+    "tourniquet": 1500,
+    "chest_seal": 800,
+    "hemostatic_gauze": 1800,
+    "morphine_autoinjector": 1200
+   },
+   "role": "",
+   "beds": 0,
+   "beds_used": 0,
+   "status": "OPERATIONAL"
+  },
+  {
+   "id": "sup-04",
+   "kind": "SUPPLIER",
+   "name": "Regional blood centre (Dnipro region)",
+   "lat": 48.42,
+   "lon": 35.12,
+   "stock": {
+    "blood_oneg": 150
+   },
+   "role": "",
+   "beds": 0,
+   "beds_used": 0,
+   "status": "OPERATIONAL"
+  },
+  {
+   "id": "dc-04",
+   "kind": "DISTRIBUTION_CENTRE",
+   "name": "Central medical logistics hub (Vinnytsia region)",
+   "lat": 49.23,
+   "lon": 28.47,
+   "stock": {
+    "tourniquet": 500,
+    "blood_oneg": 30,
+    "chest_seal": 300,
+    "hemostatic_gauze": 500,
+    "morphine_autoinjector": 200
+   },
+   "role": "",
+   "beds": 0,
+   "beds_used": 0,
+   "status": "OPERATIONAL"
+  },
+  {
+   "id": "dc-05",
+   "kind": "DISTRIBUTION_CENTRE",
+   "name": "Regional medical depot (Poltava region)",
+   "lat": 49.59,
+   "lon": 34.55,
+   "stock": {
+    "tourniquet": 200,
+    "blood_oneg": 20,
+    "chest_seal": 150,
+    "hemostatic_gauze": 200,
+    "morphine_autoinjector": 80
+   },
+   "role": "",
+   "beds": 0,
+   "beds_used": 0,
+   "status": "OPERATIONAL"
+  },
+  {
+   "id": "hos-03",
+   "kind": "HOSPITAL",
+   "name": "Role 3 hospital (Zaporizhzhia region)",
+   "lat": 47.87,
+   "lon": 35.06,
+   "stock": {
+    "blood_oneg": 40,
+    "tourniquet": 15,
+    "chest_seal": 15,
+    "hemostatic_gauze": 20,
+    "morphine_autoinjector": 15
+   },
+   "role": "ROLE_3",
+   "beds": 60,
+   "beds_used": 0,
+   "status": "OPERATIONAL"
+  },
+  {
    "id": "aid-01",
    "kind": "HOSPITAL",
    "name": "Role 1 aid station (sector)",
@@ -756,6 +1145,96 @@ window.MOCK_SNAPSHOT = {
    "dst_id": "dep-02",
    "lead_time_min": 20,
    "mode": "DRONE"
+  },
+  {
+   "src_id": "sup-01",
+   "dst_id": "dc-04",
+   "lead_time_min": 600,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "dc-03",
+   "dst_id": "dc-04",
+   "lead_time_min": 420,
+   "mode": "RAIL"
+  },
+  {
+   "src_id": "sup-03",
+   "dst_id": "dc-04",
+   "lead_time_min": 240,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "sup-03",
+   "dst_id": "dc-05",
+   "lead_time_min": 360,
+   "mode": "RAIL"
+  },
+  {
+   "src_id": "dc-04",
+   "dst_id": "dc-05",
+   "lead_time_min": 480,
+   "mode": "RAIL"
+  },
+  {
+   "src_id": "dc-04",
+   "dst_id": "dc-01",
+   "lead_time_min": 660,
+   "mode": "RAIL"
+  },
+  {
+   "src_id": "dc-05",
+   "dst_id": "dc-01",
+   "lead_time_min": 240,
+   "mode": "RAIL"
+  },
+  {
+   "src_id": "sup-02",
+   "dst_id": "dc-05",
+   "lead_time_min": 300,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "sup-04",
+   "dst_id": "hos-02",
+   "lead_time_min": 20,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "sup-04",
+   "dst_id": "dc-01",
+   "lead_time_min": 20,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "sup-04",
+   "dst_id": "hos-03",
+   "lead_time_min": 120,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "dc-01",
+   "dst_id": "hos-03",
+   "lead_time_min": 90,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "hos-03",
+   "dst_id": "dc-02",
+   "lead_time_min": 20,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "hos-03",
+   "dst_id": "hos-01",
+   "lead_time_min": 60,
+   "mode": "TRUCK"
+  },
+  {
+   "src_id": "dc-05",
+   "dst_id": "dc-02",
+   "lead_time_min": 300,
+   "mode": "RAIL"
   }
  ],
  "dispatches": [],

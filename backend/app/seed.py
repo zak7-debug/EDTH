@@ -49,11 +49,13 @@ class SeedData:
     supply_links: list[SupplyLink]
 
 
-# DEMO: squads and their callsigns.
+# DEMO: four teams, each two medics (ALPHA-MED1, ALPHA-MED2) and eight soldiers (ALPHA-1 .. ALPHA-8).
+# Said on the radio in Ukrainian: «Альфа, медик один», «Альфа три» (voice.py).
 UNITS = [
-    Unit("unit-1", "BADGER 1"),
-    Unit("unit-2", "BADGER 2"),
-    Unit("unit-3", "BADGER 3"),
+    Unit("unit-1", "ALPHA"),
+    Unit("unit-2", "CHARLIE"),
+    Unit("unit-3", "DELTA"),
+    Unit("unit-4", "ECHO"),
 ]
 
 # Squad positions (lat, lon), south of the EW jamming zone.
@@ -62,8 +64,12 @@ _SQUAD_CENTRES = {
     "unit-1": (47.638, 35.640),
     "unit-2": (47.622, 35.602),
     "unit-3": (47.608, 35.662),
+    "unit-4": (47.630, 35.718),
 }
-_SQUAD_SIZES = {"unit-1": 7, "unit-2": 7, "unit-3": 6}  # incl. one medic each -> 20 total
+# The first medic and soldiers of the first three teams keep the ids the demo script and tests use
+# (med-1..3, sol-01..17); the rest are added after them: med-4..8, sol-18..32.
+_SQUAD_SIZES = {"unit-1": 7, "unit-2": 7, "unit-3": 6, "unit-4": 1}  # first medic + original soldiers
+TEAM_MEDICS, TEAM_SOLDIERS = 2, 8  # -> 40 people
 
 # TUNE: below these levels a medic counts as LOW_STOCK (Person.low_items).
 MEDIC_THRESHOLDS = {
@@ -80,6 +86,7 @@ _MEDIC_STOCK = {
     "med-2": {"tourniquet": 3, "blood_oneg": 1, "chest_seal": 2, "hemostatic_gauze": 3, "morphine_autoinjector": 3},
     "med-3": {"tourniquet": 4, "blood_oneg": 2, "chest_seal": 3, "hemostatic_gauze": 3, "morphine_autoinjector": 2},
 }
+_SECOND_MEDIC_STOCK = {"tourniquet": 3, "blood_oneg": 2, "chest_seal": 2, "hemostatic_gauze": 3, "morphine_autoinjector": 2}
 
 # Drone launch sites. Stock is what drones reload from. Launch Site West is short of blood on purpose.
 # DEMO: launch sites. Moving Launch Site North changes whether the EW zone sits on its route.
@@ -237,24 +244,41 @@ COVER_AREAS = [
 
 def _build_personnel(rng: random.Random) -> list[Person]:
     people: list[Person] = []
-    sol_n = 0
-    for i, unit in enumerate(UNITS, start=1):
+    jitter = lambda: (rng.uniform(-0.002, 0.002), rng.uniform(-0.003, 0.003))  # ~±200 m
+
+    def medic(pid: str, unit: Unit, k: int, stock: dict) -> Person:
         clat, clon = _SQUAD_CENTRES[unit.id]
-        jitter = lambda: (rng.uniform(-0.002, 0.002), rng.uniform(-0.003, 0.003))  # ~±200 m
-        med_id = f"med-{i}"
         dlat, dlon = jitter()
-        people.append(Person(
-            id=med_id, kind="MEDIC", callsign=f"{unit.callsign}-DOC", unit_id=unit.id,
-            lat=round(clat + dlat, 6), lon=round(clon + dlon, 6),
-            stock=dict(_MEDIC_STOCK[med_id]), stock_threshold=dict(MEDIC_THRESHOLDS),
-        ))
+        return Person(id=pid, kind="MEDIC", callsign=f"{unit.callsign}-MED{k}", unit_id=unit.id,
+                      lat=round(clat + dlat, 6), lon=round(clon + dlon, 6),
+                      stock=dict(stock), stock_threshold=dict(MEDIC_THRESHOLDS))
+
+    def soldier(pid: str, unit: Unit, j: int) -> Person:
+        clat, clon = _SQUAD_CENTRES[unit.id]
+        dlat, dlon = jitter()
+        return Person(id=pid, kind="SOLDIER", callsign=f"{unit.callsign}-{j}", unit_id=unit.id,
+                      lat=round(clat + dlat, 6), lon=round(clon + dlon, 6))
+
+    # The original people first, in the original order, so their ids and positions don't change.
+    sol_n, med_n, count = 0, 0, {}
+    for i, unit in enumerate(UNITS, start=1):
+        if unit.id == "unit-4":
+            continue
+        med_n += 1
+        people.append(medic(f"med-{i}", unit, 1, _MEDIC_STOCK[f"med-{i}"]))
         for j in range(1, _SQUAD_SIZES[unit.id]):
             sol_n += 1
-            dlat, dlon = jitter()
-            people.append(Person(
-                id=f"sol-{sol_n:02d}", kind="SOLDIER", callsign=f"{unit.callsign}-{j}",
-                unit_id=unit.id, lat=round(clat + dlat, 6), lon=round(clon + dlon, 6),
-            ))
+            people.append(soldier(f"sol-{sol_n:02d}", unit, j))
+        count[unit.id] = (1, _SQUAD_SIZES[unit.id] - 1)
+    # Then fill every team up to two medics and eight soldiers.
+    for unit in UNITS:
+        meds, sols = count.get(unit.id, (0, 0))
+        for k in range(meds + 1, TEAM_MEDICS + 1):
+            med_n += 1
+            people.append(medic(f"med-{med_n}", unit, k, _SECOND_MEDIC_STOCK))
+        for j in range(sols + 1, TEAM_SOLDIERS + 1):
+            sol_n += 1
+            people.append(soldier(f"sol-{sol_n:02d}", unit, j))
     return people
 
 
